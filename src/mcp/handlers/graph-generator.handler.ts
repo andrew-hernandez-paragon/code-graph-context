@@ -102,6 +102,9 @@ export class GraphGeneratorHandler {
     await this.neo4jService.run(QUERIES.CREATE_PROJECT_ID_INDEX_EMBEDDED);
     await this.neo4jService.run(QUERIES.CREATE_PROJECT_ID_INDEX_SOURCEFILE);
     await this.neo4jService.run(QUERIES.CREATE_NORMALIZED_HASH_INDEX);
+    await this.neo4jService.run(QUERIES.CREATE_SESSION_BOOKMARK_INDEX);
+    await this.neo4jService.run(QUERIES.CREATE_SESSION_NOTE_INDEX);
+    await this.neo4jService.run(QUERIES.CREATE_SESSION_NOTE_CATEGORY_INDEX);
     await debugLog('Project indexes created');
   }
 

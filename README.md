@@ -345,7 +345,6 @@ Explicit task management with dependencies:
 
 | Tool | Purpose |
 |------|---------|
-| `swarm_orchestrate` | Decompose a task and spawn worker agents |
 | `swarm_post_task` | Add a task to the queue |
 | `swarm_get_tasks` | Query tasks with filters |
 | `swarm_claim_task` | Claim/start/release a task |
@@ -357,28 +356,20 @@ Explicit task management with dependencies:
 ### Example: Parallel Refactoring
 
 ```typescript
-// Orchestrator decomposes and creates tasks
-swarm_orchestrate({
+// Orchestrator decomposes the task and creates individual work items
+swarm_post_task({
   projectId: "backend",
-  task: "Rename getUserById to findUserById across the codebase",
-  maxAgents: 3
+  swarmId: "swarm_rename_user",
+  title: "Update UserService.findUserById",
+  description: "Rename getUserById to findUserById in UserService",
+  type: "refactor",
+  createdBy: "orchestrator"
 })
 
-// Returns a plan:
-{
-  swarmId: "swarm_abc123",
-  plan: {
-    totalTasks: 12,
-    parallelizable: 8,
-    sequential: 4,  // These have dependencies
-    tasks: [
-      { id: "task_1", title: "Update UserService.findUserById", status: "available" },
-      { id: "task_2", title: "Update UserController references", status: "blocked", depends: ["task_1"] },
-      ...
-    ]
-  },
-  workerInstructions: "..."  // Copy-paste to spawn workers
-}
+// Workers claim and execute tasks
+swarm_claim_task({ projectId: "backend", swarmId: "swarm_rename_user", agentId: "worker_1" })
+// ... do work ...
+swarm_complete_task({ taskId: "task_1", agentId: "worker_1", action: "complete", summary: "Renamed method" })
 ```
 
 ### Install the Swarm Skill
@@ -428,7 +419,6 @@ See [`skills/swarm/SKILL.md`](skills/swarm/SKILL.md) for the full documentation.
 | `stop_watch_project` | Stop file watching |
 | `list_watchers` | List active file watchers |
 | **Swarm** | |
-| `swarm_orchestrate` | Plan and spawn parallel agents |
 | `swarm_post_task` | Add task to the queue |
 | `swarm_get_tasks` | Query tasks |
 | `swarm_claim_task` | Claim/start/release tasks |
@@ -458,7 +448,7 @@ detect_dead_code → detect_duplicate_code → prioritize cleanup
 
 **Pattern 4: Multi-Agent Work**
 ```
-swarm_orchestrate → spawn workers → swarm_get_tasks(includeStats) → swarm_cleanup
+swarm_post_task → swarm_claim_task → swarm_complete_task → swarm_get_tasks(includeStats) → swarm_cleanup
 ```
 
 ### Multi-Project Support

@@ -42,11 +42,11 @@ export const TOOL_NAMES = {
   swarmClaimTask: 'swarm_claim_task',
   swarmCompleteTask: 'swarm_complete_task',
   swarmGetTasks: 'swarm_get_tasks',
-  swarmOrchestrate: 'swarm_orchestrate',
   saveSessionBookmark: 'save_session_bookmark',
   restoreSessionBookmark: 'restore_session_bookmark',
   saveSessionNote: 'save_session_note',
   recallSessionNotes: 'recall_session_notes',
+  cleanupSession: 'cleanup_session',
 } as const;
 
 // Tool Metadata
@@ -264,12 +264,6 @@ Complete unblocks dependent tasks. Failed tasks can be retried if retryable=true
 
 Sort by: priority (default), created, updated. Add includeStats:true for aggregate counts.`,
   },
-  [TOOL_NAMES.swarmOrchestrate]: {
-    title: 'Swarm Orchestrate',
-    description: `Coordinate multiple agents for complex multi-file tasks. Analyzes codebase, decomposes into atomic tasks, spawns workers, monitors progress.
-
-Use dryRun:true to preview plan. maxAgents controls parallelism (default: 3). Failed tasks auto-retry via pheromone decay.`,
-  },
   [TOOL_NAMES.saveSessionBookmark]: {
     title: 'Save Session Bookmark',
     description: `Save current session context as a bookmark for cross-session continuity.
@@ -338,6 +332,21 @@ Parameters:
 - minSimilarity (default: 0.3): Minimum similarity for vector search
 
 Returns notes with topic, content, category, severity, relevance score (vector mode), and linked aboutNodes.`,
+  },
+  [TOOL_NAMES.cleanupSession]: {
+    title: 'Cleanup Session',
+    description: `Clean up expired session notes and old session bookmarks.
+
+Removes:
+- Expired SessionNote nodes (past expiresAt) and their edges
+- Old SessionBookmark nodes, keeping only the most recent N per session (default: 3)
+
+Parameters:
+- projectId (required): Project ID, name, or path
+- keepBookmarks (default: 3): Number of most recent bookmarks to keep per session
+- dryRun (default: false): Preview what would be deleted without deleting
+
+Returns counts of deleted notes, bookmarks, and edges.`,
   },
 } as const;
 

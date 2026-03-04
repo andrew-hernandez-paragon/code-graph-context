@@ -176,6 +176,14 @@ export const QUERIES = {
   }}
 `,
 
+  // Indexes for efficient SessionBookmark and SessionNote lookups
+  CREATE_SESSION_BOOKMARK_INDEX:
+    'CREATE INDEX session_bookmark_idx IF NOT EXISTS FOR (n:SessionBookmark) ON (n.projectId, n.sessionId)',
+  CREATE_SESSION_NOTE_INDEX:
+    'CREATE INDEX session_note_idx IF NOT EXISTS FOR (n:SessionNote) ON (n.projectId, n.sessionId)',
+  CREATE_SESSION_NOTE_CATEGORY_INDEX:
+    'CREATE INDEX session_note_category_idx IF NOT EXISTS FOR (n:SessionNote) ON (n.projectId, n.category)',
+
   // Vector search with configurable fetch multiplier for project filtering.
   // fetchMultiplier (default: 10) controls how many extra results to fetch before filtering by projectId.
   // minSimilarity (default: 0.3) filters out low-confidence matches for nonsense queries.

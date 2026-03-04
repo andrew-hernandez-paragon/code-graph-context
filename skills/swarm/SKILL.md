@@ -18,30 +18,26 @@ Use both together: tasks define WHAT to do, pheromones prevent WHO from collidin
 
 ---
 
-## Quick Start: Automatic Orchestration
+## Quick Start: Manual Orchestration
 
-For most multi-file tasks, use `swarm_orchestrate`:
+For multi-file tasks, decompose and post tasks manually:
 
 ```javascript
-swarm_orchestrate({
+// 1. Create a swarm and post tasks
+swarm_post_task({
   projectId: "<PROJECT>",
-  task: "<NATURAL_LANGUAGE_DESCRIPTION>",
-  maxAgents: 3,
-  dryRun: false
+  swarmId: "swarm_<slug>",
+  title: "Implement feature X",
+  description: "...",
+  type: "implement",
+  createdBy: "orchestrator"
 })
-```
 
-**Returns:**
-- `swarmId` - Unique identifier for this swarm run
-- `plan` - Decomposed tasks with dependencies
-- `workerInstructions` - Ready-to-use prompt for spawning agents
-
-**Then spawn workers:**
-```javascript
+// 2. Spawn workers to claim and execute tasks
 Task({
   subagent_type: "general-purpose",
   run_in_background: false,  // CRITICAL: must be false for MCP tools
-  prompt: workerInstructions
+  prompt: "Claim and execute task from swarm_<slug>..."
 })
 ```
 
@@ -195,7 +191,7 @@ Return to Step 1. Exit when swarm_claim_task returns "no_tasks".
 
 ## Manual Multi-Phase Orchestration
 
-For complex features requiring shared contracts, use phases instead of `swarm_orchestrate`:
+For complex features requiring shared contracts, use a phased approach:
 
 ### Phase 0: Discovery + Contracts
 
@@ -382,8 +378,6 @@ After cleanup, summarize:
 ### Orchestration
 | Tool | Purpose |
 |------|---------|
-| `swarm_orchestrate` | Auto-decompose task, create queue, return worker instructions |
-
 ### Task Queue
 | Tool | Purpose |
 |------|---------|

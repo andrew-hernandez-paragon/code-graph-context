@@ -16,6 +16,7 @@ import { createNaturalLanguageToCypherTool } from './natural-language-to-cypher.
 import { createParseTypescriptProjectTool } from './parse-typescript-project.tool.js';
 import { createSearchCodebaseTool } from './search-codebase.tool.js';
 import { createRestoreSessionBookmarkTool, createSaveSessionBookmarkTool } from './session-bookmark.tool.js';
+import { createCleanupSessionTool } from './session-cleanup.tool.js';
 import { createRecallSessionNotesTool, createSaveSessionNoteTool } from './session-note.tool.js';
 import { createStartWatchProjectTool } from './start-watch-project.tool.js';
 import { createStopWatchProjectTool } from './stop-watch-project.tool.js';
@@ -23,7 +24,6 @@ import { createSwarmClaimTaskTool } from './swarm-claim-task.tool.js';
 import { createSwarmCleanupTool } from './swarm-cleanup.tool.js';
 import { createSwarmCompleteTaskTool } from './swarm-complete-task.tool.js';
 import { createSwarmGetTasksTool } from './swarm-get-tasks.tool.js';
-import { createSwarmOrchestrateTool } from './swarm-orchestrate.tool.js';
 import { createSwarmPheromoneTool } from './swarm-pheromone.tool.js';
 import { createSwarmPostTaskTool } from './swarm-post-task.tool.js';
 import { createSwarmSenseTool } from './swarm-sense.tool.js';
@@ -92,9 +92,6 @@ export const registerAllTools = (server: McpServer): void => {
   createSwarmCompleteTaskTool(server);
   createSwarmGetTasksTool(server);
 
-  // Register swarm orchestration tool (meta-tool for coordinating multi-agent work)
-  createSwarmOrchestrateTool(server);
-
   // Register session bookmark tools (cross-session context continuity)
   createSaveSessionBookmarkTool(server);
   createRestoreSessionBookmarkTool(server);
@@ -102,4 +99,7 @@ export const registerAllTools = (server: McpServer): void => {
   // Register session note tools (durable observations and decisions)
   createSaveSessionNoteTool(server);
   createRecallSessionNotesTool(server);
+
+  // Register session cleanup tool
+  createCleanupSessionTool(server);
 };

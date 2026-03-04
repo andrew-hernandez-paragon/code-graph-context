@@ -103,11 +103,24 @@ const GET_SESSION_NOTES_QUERY = `
   MATCH (n:SessionNote)
   WHERE n.projectId = $projectId
     AND n.sessionId = $sessionId
+    AND (n.expiresAt IS NULL OR n.expiresAt > timestamp())
+
+  OPTIONAL MATCH (n)-[:ABOUT]->(codeNode)
+  WHERE NOT codeNode:SessionNote
+    AND NOT codeNode:SessionBookmark
+    AND NOT codeNode:Pheromone
+    AND NOT codeNode:SwarmTask
+
   RETURN n.id AS id,
-         n.sessionId AS sessionId,
-         n.agentId AS agentId,
+         n.topic AS topic,
          n.content AS content,
-         n.createdAt AS createdAt
+         n.category AS category,
+         n.severity AS severity,
+         n.agentId AS agentId,
+         n.sessionId AS sessionId,
+         n.createdAt AS createdAt,
+         n.expiresAt AS expiresAt,
+         collect(DISTINCT {id: codeNode.id, name: codeNode.name, filePath: codeNode.filePath}) AS aboutNodes
   ORDER BY n.createdAt ASC
   LIMIT 50
 `;
@@ -312,13 +325,21 @@ export const createRestoreSessionBookmarkTool = (server: McpServer): void => {
           return node;
         });
 
-        const notes = noteRows.map((n: any) => ({
-          id: n.id,
-          sessionId: n.sessionId,
-          agentId: n.agentId,
-          content: n.content,
-          createdAt: typeof n.createdAt === 'object' && n.createdAt?.toNumber ? n.createdAt.toNumber() : n.createdAt,
-        }));
+        const notes = noteRows.map((n: any) => {
+          const aboutNodes = (n.aboutNodes ?? []).filter((node: any) => node?.id != null);
+          return {
+            id: n.id,
+            topic: n.topic,
+            content: n.content,
+            category: n.category,
+            severity: n.severity,
+            agentId: n.agentId,
+            sessionId: n.sessionId,
+            createdAt: typeof n.createdAt === 'object' && n.createdAt?.toNumber ? n.createdAt.toNumber() : n.createdAt,
+            expiresAt: typeof n.expiresAt === 'object' && n.expiresAt?.toNumber ? n.expiresAt.toNumber() : n.expiresAt,
+            aboutNodes,
+          };
+        });
 
         // Identify working set nodes not found in the graph (stale IDs after re-parse)
         const foundIds = new Set(workingSetRows.map((r: any) => r.id));
