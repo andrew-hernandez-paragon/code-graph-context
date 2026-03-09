@@ -24,6 +24,7 @@ import { createSwarmClaimTaskTool } from './swarm-claim-task.tool.js';
 import { createSwarmCleanupTool } from './swarm-cleanup.tool.js';
 import { createSwarmCompleteTaskTool } from './swarm-complete-task.tool.js';
 import { createSwarmGetTasksTool } from './swarm-get-tasks.tool.js';
+import { createSwarmMessageTool } from './swarm-message.tool.js';
 import { createSwarmPheromoneTool } from './swarm-pheromone.tool.js';
 import { createSwarmPostTaskTool } from './swarm-post-task.tool.js';
 import { createSwarmSenseTool } from './swarm-sense.tool.js';
@@ -91,6 +92,9 @@ export const registerAllTools = (server: McpServer): void => {
   createSwarmClaimTaskTool(server);
   createSwarmCompleteTaskTool(server);
   createSwarmGetTasksTool(server);
+
+  // Register swarm messaging tools (direct agent-to-agent communication)
+  createSwarmMessageTool(server);
 
   // Register session bookmark tools (cross-session context continuity)
   createSaveSessionBookmarkTool(server);

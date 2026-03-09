@@ -105,6 +105,41 @@ export const WORKFLOW_STATES: PheromoneType[] = ['exploring', 'claiming', 'modif
 export const FLAG_TYPES: PheromoneType[] = ['warning', 'proposal', 'needs_review', 'session_context'];
 
 // ============================================================================
+// SWARM MESSAGING CONSTANTS
+// ============================================================================
+
+/**
+ * Message categories for direct agent-to-agent communication.
+ * Unlike pheromones (passive, decay-based), messages are explicit and persistent until read.
+ */
+export const MESSAGE_CATEGORIES = {
+  blocked: 'Agent is blocked and needs help',
+  conflict: 'File or resource conflict detected',
+  finding: 'Important discovery another agent should know',
+  request: 'Direct request to another agent',
+  alert: 'Urgent notification (e.g., breaking change, test failure)',
+  handoff: 'Context handoff between agents (e.g., partial work)',
+} as const;
+
+export type MessageCategory = keyof typeof MESSAGE_CATEGORIES;
+
+export const MESSAGE_CATEGORY_KEYS = Object.keys(MESSAGE_CATEGORIES) as [MessageCategory, ...MessageCategory[]];
+
+/**
+ * Default TTL for messages (4 hours). Messages older than this are auto-cleaned.
+ */
+export const MESSAGE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Generate a unique message ID
+ */
+export const generateMessageId = (): string => {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `msg_${timestamp}_${random}`;
+};
+
+// ============================================================================
 // ORCHESTRATOR CONSTANTS
 // ============================================================================
 

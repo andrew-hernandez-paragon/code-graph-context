@@ -16,6 +16,7 @@ import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 
 import { TASK_TYPES, TASK_PRIORITIES, TaskPriority } from './swarm-constants.js';
+import { PENDING_MESSAGES_FOR_AGENT_QUERY, AUTO_ACKNOWLEDGE_QUERY } from './swarm-message.tool.js';
 
 /** Maximum retries when racing for a task */
 const MAX_CLAIM_RETRIES = 3;
@@ -496,6 +497,41 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
             filePath: t.filePath,
           }));
 
+        // Fetch pending messages for this agent (direct delivery on claim)
+        let pendingMessages: any[] = [];
+        try {
+          const msgResult = await neo4jService.run(PENDING_MESSAGES_FOR_AGENT_QUERY, {
+            projectId: resolvedProjectId,
+            swarmId,
+            agentId,
+          });
+
+          if (msgResult.length > 0) {
+            pendingMessages = msgResult.map((m: any) => {
+              const ts = typeof m.timestamp === 'object' && m.timestamp?.toNumber ? m.timestamp.toNumber() : m.timestamp;
+              return {
+                id: m.id,
+                from: m.fromAgentId,
+                category: m.category,
+                content: m.content,
+                taskId: m.taskId ?? undefined,
+                filePaths: m.filePaths?.length > 0 ? m.filePaths : undefined,
+                age: ts ? `${Math.round((Date.now() - ts) / 1000)}s ago` : null,
+              };
+            });
+
+            // Auto-acknowledge delivered messages
+            const deliveredIds = pendingMessages.map((m: any) => m.id);
+            await neo4jService.run(AUTO_ACKNOWLEDGE_QUERY, {
+              messageIds: deliveredIds,
+              agentId,
+            });
+          }
+        } catch (msgError) {
+          // Non-fatal: message delivery failure shouldn't block task claim
+          await debugLog('Swarm claim task: message delivery failed (non-fatal)', { error: String(msgError) });
+        }
+
         // Slim response - only essential fields for agent to do work
         return createSuccessResponse(
           JSON.stringify({
@@ -512,6 +548,7 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
               targetFilePaths: task.targetFilePaths,
               ...(task.dependencies?.length > 0 && { dependencies: task.dependencies }),
             },
+            ...(pendingMessages.length > 0 && { messages: pendingMessages }),
             ...(retryCount > 0 && { retryAttempts: retryCount }),
           }),
         );

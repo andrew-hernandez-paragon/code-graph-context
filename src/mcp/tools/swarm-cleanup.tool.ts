@@ -87,6 +87,24 @@ const COUNT_ALL_QUERY = `
   RETURN count(p) as count, collect(DISTINCT p.agentId) as agents, collect(DISTINCT p.swarmId) as swarms, collect(DISTINCT p.type) as types
 `;
 
+/**
+ * Neo4j query to delete SwarmMessage nodes by swarm ID
+ */
+const CLEANUP_MESSAGES_BY_SWARM_QUERY = `
+  MATCH (m:SwarmMessage)
+  WHERE m.projectId = $projectId
+    AND m.swarmId = $swarmId
+  WITH m, m.category as category
+  DELETE m
+  RETURN count(m) as deleted, collect(DISTINCT category) as categories
+`;
+
+const COUNT_MESSAGES_BY_SWARM_QUERY = `
+  MATCH (m:SwarmMessage)
+  WHERE m.projectId = $projectId AND m.swarmId = $swarmId
+  RETURN count(m) as count, collect(DISTINCT m.category) as categories
+`;
+
 export const createSwarmCleanupTool = (server: McpServer): void => {
   server.registerTool(
     TOOL_NAMES.swarmCleanup,
@@ -171,6 +189,16 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
             taskStatuses = taskResult[0]?.statuses ?? [];
           }
 
+          let messageCount = 0;
+          let messageCategories: string[] = [];
+          if (swarmId) {
+            const msgResult = await neo4jService.run(COUNT_MESSAGES_BY_SWARM_QUERY, params);
+            messageCount = msgResult[0]?.count ?? 0;
+            messageCount =
+              typeof messageCount === 'object' && 'toNumber' in messageCount ? (messageCount as any).toNumber() : messageCount;
+            messageCategories = msgResult[0]?.categories ?? [];
+          }
+
           return createSuccessResponse(
             JSON.stringify({
               success: true,
@@ -191,6 +219,12 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
                       statuses: taskStatuses,
                     }
                   : null,
+              messages: swarmId
+                ? {
+                    wouldDelete: messageCount,
+                    categories: messageCategories,
+                  }
+                : null,
               keepTypes,
               projectId: resolvedProjectId,
             }),
@@ -214,6 +248,23 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
           taskStatuses = taskResult[0]?.statuses ?? [];
         }
 
+        // Delete messages if swarmId provided
+        let messagesDeleted = 0;
+        let messageCategories: string[] = [];
+        if (swarmId) {
+          const msgResult = await neo4jService.run(CLEANUP_MESSAGES_BY_SWARM_QUERY, params);
+          messagesDeleted = msgResult[0]?.deleted ?? 0;
+          messagesDeleted =
+            typeof messagesDeleted === 'object' && 'toNumber' in messagesDeleted
+              ? (messagesDeleted as any).toNumber()
+              : messagesDeleted;
+          messageCategories = msgResult[0]?.categories ?? [];
+        }
+
+        const parts = [`${pheromonesDeleted} pheromones`];
+        if (swarmId && includeTasks) parts.push(`${tasksDeleted} tasks`);
+        if (swarmId) parts.push(`${messagesDeleted} messages`);
+
         return createSuccessResponse(
           JSON.stringify({
             success: true,
@@ -233,12 +284,15 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
                     statuses: taskStatuses,
                   }
                 : null,
+            messages: swarmId
+              ? {
+                  deleted: messagesDeleted,
+                  categories: messageCategories,
+                }
+              : null,
             keepTypes,
             projectId: resolvedProjectId,
-            message:
-              swarmId && includeTasks
-                ? `Cleaned up ${pheromonesDeleted} pheromones and ${tasksDeleted} tasks`
-                : `Cleaned up ${pheromonesDeleted} pheromones`,
+            message: `Cleaned up ${parts.join(', ')}`,
           }),
         );
       } catch (error) {

@@ -47,6 +47,7 @@ export const TOOL_NAMES = {
   saveSessionNote: 'save_session_note',
   recallSessionNotes: 'recall_session_notes',
   cleanupSession: 'cleanup_session',
+  swarmMessage: 'swarm_message',
 } as const;
 
 // Tool Metadata
@@ -226,7 +227,7 @@ Returns pheromones with current intensity after decay. minIntensity default: 0.3
   },
   [TOOL_NAMES.swarmCleanup]: {
     title: 'Swarm Cleanup',
-    description: `Bulk delete pheromones. Specify swarmId, agentId, or all:true. Warning pheromones preserved by default (override with keepTypes:[]). Use dryRun:true to preview.`,
+    description: `Bulk delete pheromones, tasks, and messages. Specify swarmId, agentId, or all:true. Warning pheromones preserved by default (override with keepTypes:[]). Messages and tasks are deleted when swarmId is provided. Use dryRun:true to preview.`,
   },
   [TOOL_NAMES.swarmPostTask]: {
     title: 'Swarm Post Task',
@@ -347,6 +348,28 @@ Parameters:
 - dryRun (default: false): Preview what would be deleted without deleting
 
 Returns counts of deleted notes, bookmarks, and edges.`,
+  },
+  [TOOL_NAMES.swarmMessage]: {
+    title: 'Swarm Message',
+    description: `Direct agent-to-agent messaging via Neo4j. Unlike pheromones (passive/decay-based), messages are explicit and delivered when agents claim tasks.
+
+**Actions:**
+- send: Post a message to a specific agent or broadcast to all agents in a swarm
+- read: Retrieve unread messages (or all messages) for an agent
+- acknowledge: Mark messages as read
+
+**Categories:** blocked, conflict, finding, request, alert, handoff
+
+**Key behavior:**
+- Messages sent to a specific agent are delivered when that agent calls swarm_claim_task
+- Broadcast messages (toAgentId omitted) are visible to all agents in the swarm
+- Messages auto-expire after 4 hours (configurable via ttlMs)
+- Use this for critical coordination signals that agents MUST see, not optional context
+
+**Examples:**
+- Agent finds a breaking type error: send alert to all
+- Agent is blocked on a file another agent owns: send blocked to that agent
+- Agent discovers context another agent needs: send finding to that agent`,
   },
 } as const;
 
