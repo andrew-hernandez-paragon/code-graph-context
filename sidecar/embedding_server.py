@@ -48,6 +48,13 @@ def load_model():
         import torch
         from sentence_transformers import SentenceTransformer
 
+        # Patch: CodeSage imports Conv1D from transformers.modeling_utils but it
+        # was moved to transformers.pytorch_utils. Re-export it if missing.
+        import transformers.modeling_utils
+        if not hasattr(transformers.modeling_utils, 'Conv1D'):
+            from transformers.pytorch_utils import Conv1D
+            transformers.modeling_utils.Conv1D = Conv1D
+
         device_override = os.environ.get("EMBEDDING_DEVICE", "").lower()
         if device_override:
             device = device_override

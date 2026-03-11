@@ -209,7 +209,7 @@ const installSidecarDeps = (sidecarDir: string): Promise<boolean> => {
 const verifySidecar = (sidecarDir: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const python = getSidecarPython(sidecarDir);
-    const test = spawnProcess(python, ['-c', 'from sentence_transformers import SentenceTransformer; print("ok")'], {
+    const test = spawnProcess(python, ['-c', `import transformers.modeling_utils as _mu; hasattr(_mu,"Conv1D") or setattr(_mu,"Conv1D",__import__("transformers.pytorch_utils",fromlist=["Conv1D"]).Conv1D); from sentence_transformers import SentenceTransformer; print("ok")`], {
       cwd: sidecarDir,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -311,7 +311,7 @@ const preDownloadModel = async (sidecarDir: string, python: string, modelName: s
         python,
         [
           '-c',
-          `from sentence_transformers import SentenceTransformer; m = SentenceTransformer("${modelName}", trust_remote_code=True); print(f"dims:{len(m.encode(['test'])[0])}")`,
+          `import transformers.modeling_utils as _mu; hasattr(_mu,'Conv1D') or setattr(_mu,'Conv1D',__import__('transformers.pytorch_utils',fromlist=['Conv1D']).Conv1D); from sentence_transformers import SentenceTransformer; m = SentenceTransformer("${modelName}", trust_remote_code=True); print(f"dims:{len(m.encode(['test'])[0])}")`,
         ],
         { cwd: sidecarDir, stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000 },
       );
@@ -342,7 +342,7 @@ const preDownloadModel = async (sidecarDir: string, python: string, modelName: s
       python,
       [
         '-c',
-        `from sentence_transformers import SentenceTransformer; print("downloading..."); m = SentenceTransformer("${modelName}", trust_remote_code=True); print(f"done dims:{len(m.encode(['test'])[0])}")`,
+        `import transformers.modeling_utils as _mu; hasattr(_mu,'Conv1D') or setattr(_mu,'Conv1D',__import__('transformers.pytorch_utils',fromlist=['Conv1D']).Conv1D); from sentence_transformers import SentenceTransformer; print("downloading..."); m = SentenceTransformer("${modelName}", trust_remote_code=True); print(f"done dims:{len(m.encode(['test'])[0])}")`,
       ],
       { cwd: sidecarDir, stdio: ['pipe', 'pipe', 'inherit'] },
     );
@@ -362,7 +362,7 @@ const preDownloadModel = async (sidecarDir: string, python: string, modelName: s
   } else {
     log(sym.warn, 'Model download failed — it will retry on first use');
     console.log(
-      `  ${c.dim}You can download manually: ${python} -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${modelName}', trust_remote_code=True)"${c.reset}`,
+      `  ${c.dim}You can download manually: ${python} -c "import transformers.modeling_utils as _mu; hasattr(_mu,'Conv1D') or setattr(_mu,'Conv1D',__import__('transformers.pytorch_utils',fromlist=['Conv1D']).Conv1D); from sentence_transformers import SentenceTransformer; SentenceTransformer('${modelName}', trust_remote_code=True)"${c.reset}`,
     );
   }
 };
