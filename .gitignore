@@ -142,8 +142,9 @@ dist
 *.swo
 *~
 
-# Python venv (created by `code-graph-context init`)
+# Python sidecar artifacts
 sidecar/.venv/
+__pycache__/
 
 # Debug and generated files
 debug-search.log
