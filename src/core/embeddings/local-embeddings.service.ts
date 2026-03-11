@@ -38,7 +38,8 @@ export class LocalEmbeddingsService {
 
     for (let i = 0; i < texts.length; i += safeBatchSize) {
       const batch = texts.slice(i, i + safeBatchSize);
-      const batchIndex = Math.floor(i / batchSize) + 1;
+      const batchIndex = Math.floor(i / safeBatchSize) + 1;
+      console.error(`[embedding] Batch ${batchIndex}/${totalBatches} (${batch.length} texts)`);
       await debugLog('Embedding batch progress', {
         provider: 'local',
         batchIndex,
@@ -46,8 +47,14 @@ export class LocalEmbeddingsService {
         batchSize: batch.length,
       });
 
-      const batchResults = await sidecar.embed(batch);
-      results.push(...batchResults);
+      try {
+        const batchResults = await sidecar.embed(batch);
+        results.push(...batchResults);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[embedding] Batch ${batchIndex}/${totalBatches} FAILED: ${msg}`);
+        throw error;
+      }
     }
 
     return results;

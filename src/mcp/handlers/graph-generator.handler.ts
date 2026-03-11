@@ -166,13 +166,17 @@ export class GraphGeneratorHandler {
     // Batch embed all texts that need it
     if (nodesNeedingEmbedding.length > 0) {
       const texts = nodesNeedingEmbedding.map((n) => n.text);
+      const totalBatches = Math.ceil(texts.length / EMBEDDING_BATCH_CONFIG.maxBatchSize);
+      console.error(`[embedding] Starting ${texts.length} texts in ${totalBatches} batches (batch_size=${EMBEDDING_BATCH_CONFIG.maxBatchSize})`);
 
       try {
         const embeddings = await this.embeddingsService.embedTextsInBatches(texts, EMBEDDING_BATCH_CONFIG.maxBatchSize);
 
         // Map embeddings back to their nodes
+        let embeddedCount = 0;
         nodesNeedingEmbedding.forEach((item, i) => {
           const embedding = embeddings[i];
+          if (embedding) embeddedCount++;
           nodeResults[item.index] = {
             ...item.node,
             labels: embedding ? [...item.node.labels, GraphGeneratorHandler.EMBEDDED_LABEL] : item.node.labels,
@@ -183,14 +187,16 @@ export class GraphGeneratorHandler {
           };
         });
 
+        console.error(`[embedding] Done: ${embeddedCount}/${texts.length} nodes embedded`);
         await debugLog('Batch embedding completed', {
           totalNodes: nodes.length,
-          nodesEmbedded: nodesNeedingEmbedding.length,
-          batchesUsed: Math.ceil(texts.length / EMBEDDING_BATCH_CONFIG.maxBatchSize),
+          nodesEmbedded: embeddedCount,
+          batchesUsed: totalBatches,
         });
       } catch (error) {
-        // DON'T silently continue - propagate the error so user knows what's wrong
-        await debugLog('Embedding failed', { error: error instanceof Error ? error.message : String(error) });
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[embedding] FAILED: ${msg}`);
+        await debugLog('Embedding failed', { error: msg });
         throw error;
       }
     }
