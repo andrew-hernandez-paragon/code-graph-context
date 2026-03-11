@@ -1,6 +1,6 @@
 /**
  * Local Embeddings Service
- * Uses a Python sidecar running Qodo-Embed-1-1.5B (or configurable model).
+ * Uses a Python sidecar running CodeSage-Base-v2 (or configurable model).
  * Default provider — no API key required.
  */
 
@@ -9,7 +9,7 @@ import { debugLog } from '../../mcp/utils.js';
 import { getEmbeddingSidecar } from './embedding-sidecar.js';
 
 const BATCH_CONFIG = {
-  maxBatchSize: 8, // Small batches — 1.5B model on MPS OOMs at higher values on 16GB machines
+  maxBatchSize: parseInt(process.env.EMBEDDING_BATCH_SIZE ?? '', 10) || 16,
 } as const;
 
 export class LocalEmbeddingsService {
