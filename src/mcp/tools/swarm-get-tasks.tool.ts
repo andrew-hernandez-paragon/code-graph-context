@@ -175,10 +175,7 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
         projectId: z.string().describe('Project ID, name, or path'),
         swarmId: z.string().optional().describe('Filter by swarm ID'),
         taskId: z.string().optional().describe('Get a specific task by ID (returns full details)'),
-        statuses: z
-          .array(z.enum(TASK_STATUSES))
-          .optional()
-          .describe('Filter by task statuses'),
+        statuses: z.array(z.enum(TASK_STATUSES)).optional().describe('Filter by task statuses'),
         types: z.array(z.enum(TASK_TYPES)).optional().describe('Filter by task types'),
         claimedBy: z.string().optional().describe('Filter by claiming agent'),
         createdBy: z.string().optional().describe('Filter by creating agent'),
@@ -186,30 +183,15 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()
           .describe('Minimum priority level'),
-        orderBy: z
-          .enum(['priority', 'created', 'updated'])
-          .optional()
-          .default('priority')
-          .describe('Sort order'),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(100)
-          .optional()
-          .default(20)
-          .describe('Maximum tasks to return'),
+        orderBy: z.enum(['priority', 'created', 'updated']).optional().default('priority').describe('Sort order'),
+        limit: z.number().int().min(1).max(100).optional().default(20).describe('Maximum tasks to return'),
         skip: z.number().int().min(0).optional().default(0).describe('Tasks to skip for pagination'),
         includeStats: z
           .boolean()
           .optional()
           .default(false)
           .describe('Include aggregate statistics by status/type/agent'),
-        includeDependencyGraph: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Include dependency graph'),
+        includeDependencyGraph: z.boolean().optional().default(false).describe('Include dependency graph'),
       },
     },
     async ({

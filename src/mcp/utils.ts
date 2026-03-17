@@ -53,23 +53,17 @@ export const autoResolveProjectId = async (
     if (projects.length === 0) {
       return {
         success: false,
-        error: createErrorResponse(
-          'No projects found. Use parse_typescript_project to add a project first.',
-        ),
+        error: createErrorResponse('No projects found. Use parse_typescript_project to add a project first.'),
       };
     }
     if (projects.length === 1) {
       return { success: true, projectId: projects[0].projectId };
     }
     // Multiple projects — can't auto-resolve
-    const projectList = projects
-      .map((p: any) => `  - ${p.name || p.projectId} (${p.projectId})`)
-      .join('\n');
+    const projectList = projects.map((p: any) => `  - ${p.name || p.projectId} (${p.projectId})`).join('\n');
     return {
       success: false,
-      error: createErrorResponse(
-        `Multiple projects found. Specify projectId:\n${projectList}`,
-      ),
+      error: createErrorResponse(`Multiple projects found. Specify projectId:\n${projectList}`),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -114,9 +108,7 @@ export const createEmptyResponse = (
   message: string,
   suggestion?: string,
 ): { content: Array<{ type: 'text'; text: string }> } => {
-  return createSuccessResponse(
-    JSON.stringify({ status: 'empty', message, ...(suggestion && { suggestion }) }),
-  );
+  return createSuccessResponse(JSON.stringify({ status: 'empty', message, ...(suggestion && { suggestion }) }));
 };
 
 /**

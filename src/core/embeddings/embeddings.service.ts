@@ -52,8 +52,7 @@ export const isOpenAIEnabled = (): boolean => {
     console.error(
       JSON.stringify({
         level: 'warn',
-        message:
-          '[code-graph-context] OPENAI_ENABLED is deprecated. Use OPENAI_EMBEDDINGS_ENABLED=true instead.',
+        message: '[code-graph-context] OPENAI_ENABLED is deprecated. Use OPENAI_EMBEDDINGS_ENABLED=true instead.',
       }),
     );
     return true;

@@ -17,7 +17,13 @@ import {
 } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { autoResolveProjectId, createEmptyResponse, createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
+import {
+  autoResolveProjectId,
+  createEmptyResponse,
+  createErrorResponse,
+  createSuccessResponse,
+  debugLog,
+} from '../utils.js';
 
 // Types
 type Scope = 'methods' | 'functions' | 'classes' | 'all';
@@ -148,7 +154,10 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
       title: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].title,
       description: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].description,
       inputSchema: {
-        projectId: z.string().optional().describe('Project ID, name, or path (auto-resolves if only one project exists)'),
+        projectId: z
+          .string()
+          .optional()
+          .describe('Project ID, name, or path (auto-resolves if only one project exists)'),
         type: z
           .enum(['structural', 'semantic', 'all'])
           .optional()
@@ -161,19 +170,8 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
           .optional()
           .describe('Minimum similarity threshold for semantic duplicates')
           .default(0.8),
-        includeCode: z
-          .boolean()
-          .optional()
-          .describe('Include source code snippets in results')
-          .default(false),
-        maxResults: z
-          .number()
-          .int()
-          .min(1)
-          .max(100)
-          .optional()
-          .describe('Max duplicate groups to return')
-          .default(20),
+        includeCode: z.boolean().optional().describe('Include source code snippets in results').default(false),
+        maxResults: z.number().int().min(1).max(100).optional().describe('Max duplicate groups to return').default(20),
         scope: z
           .enum(['methods', 'functions', 'classes', 'all'])
           .optional()
@@ -184,13 +182,7 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
           .optional()
           .describe('Return summary statistics only, no duplicates list')
           .default(false),
-        offset: z
-          .number()
-          .int()
-          .min(0)
-          .optional()
-          .describe('Groups to skip for pagination')
-          .default(0),
+        offset: z.number().int().min(0).optional().describe('Groups to skip for pagination').default(0),
         vectorNeighbors: z
           .number()
           .int()

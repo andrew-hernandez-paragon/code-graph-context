@@ -120,26 +120,14 @@ export const createSwarmPostTaskTool = (server: McpServer): void => {
         swarmId: z.string().describe('Swarm ID for grouping related tasks'),
         title: z.string().min(1).max(200).describe('Short title for the task'),
         description: z.string().describe('Detailed description of what needs to be done'),
-        type: z
-          .enum(TASK_TYPES)
-          .optional()
-          .default('implement')
-          .describe('Task type'),
+        type: z.enum(TASK_TYPES).optional().default('implement').describe('Task type'),
         priority: z
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()
           .default('normal')
           .describe('Task priority'),
-        targetNodeIds: z
-          .array(z.string())
-          .optional()
-          .default([])
-          .describe('Code node IDs this task targets'),
-        targetFilePaths: z
-          .array(z.string())
-          .optional()
-          .default([])
-          .describe('File paths this task affects'),
+        targetNodeIds: z.array(z.string()).optional().default([]).describe('Code node IDs this task targets'),
+        targetFilePaths: z.array(z.string()).optional().default([]).describe('File paths this task affects'),
         dependencies: z
           .array(z.string())
           .optional()

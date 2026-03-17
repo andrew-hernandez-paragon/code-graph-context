@@ -182,31 +182,17 @@ export const createSwarmMessageTool = (server: McpServer): void => {
 
         // Send parameters
         toAgentId: z.string().optional().describe('Target agent ID (omit for broadcast)'),
-        category: z
-          .enum(MESSAGE_CATEGORY_KEYS)
-          .optional()
-          .describe('Message category'),
+        category: z.enum(MESSAGE_CATEGORY_KEYS).optional().describe('Message category'),
         content: z.string().optional().describe('Message content (required for send)'),
         taskId: z.string().optional().describe('Related task ID'),
         filePaths: z.array(z.string()).optional().describe('File paths relevant to this message'),
-        ttlMs: z
-          .number()
-          .int()
-          .optional()
-          .describe(`Time-to-live in ms (0 for swarm lifetime)`),
+        ttlMs: z.number().int().optional().describe(`Time-to-live in ms (0 for swarm lifetime)`),
 
         // Read parameters
         unreadOnly: z.boolean().optional().default(true).describe('Only return unread messages'),
         categories: z.array(z.enum(MESSAGE_CATEGORY_KEYS)).optional().describe('Filter by message categories'),
         fromAgentId: z.string().optional().describe('Filter by sending agent'),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(100)
-          .optional()
-          .default(20)
-          .describe('Maximum messages to return'),
+        limit: z.number().int().min(1).max(100).optional().default(20).describe('Maximum messages to return'),
 
         // Acknowledge parameters
         messageIds: z

@@ -34,12 +34,7 @@ export const createTraverseFromNodeTool = (server: McpServer): void => {
           .optional()
           .describe('Maximum relationship traversal depth')
           .default(DEFAULTS.traversalDepth),
-        skip: z
-          .number()
-          .int()
-          .optional()
-          .describe('Results to skip for pagination')
-          .default(DEFAULTS.skipOffset),
+        skip: z.number().int().optional().describe('Results to skip for pagination').default(DEFAULTS.skipOffset),
         direction: z
           .enum(['OUTGOING', 'INCOMING', 'BOTH'])
           .optional()

@@ -151,15 +151,12 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
       title: TOOL_METADATA[TOOL_NAMES.detectDeadCode].title,
       description: TOOL_METADATA[TOOL_NAMES.detectDeadCode].description,
       inputSchema: {
-        projectId: z.string().optional().describe('Project ID, name, or path (auto-resolves if only one project exists)'),
-        excludePatterns: z
-          .array(z.string())
+        projectId: z
+          .string()
           .optional()
-          .describe('Additional file patterns to exclude as entry points'),
-        excludeSemanticTypes: z
-          .array(z.string())
-          .optional()
-          .describe('Additional semantic types to exclude'),
+          .describe('Project ID, name, or path (auto-resolves if only one project exists)'),
+        excludePatterns: z.array(z.string()).optional().describe('Additional file patterns to exclude as entry points'),
+        excludeSemanticTypes: z.array(z.string()).optional().describe('Additional semantic types to exclude'),
         includeEntryPoints: z
           .boolean()
           .optional()
@@ -170,26 +167,9 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
           .optional()
           .describe('Minimum confidence threshold for results')
           .default('LOW'),
-        summaryOnly: z
-          .boolean()
-          .optional()
-          .describe('Return summary statistics only, no item list')
-          .default(false),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(500)
-          .optional()
-          .describe('Max dead code items per page')
-          .default(100),
-        offset: z
-          .number()
-          .int()
-          .min(0)
-          .optional()
-          .describe('Items to skip for pagination')
-          .default(0),
+        summaryOnly: z.boolean().optional().describe('Return summary statistics only, no item list').default(false),
+        limit: z.number().int().min(1).max(500).optional().describe('Max dead code items per page').default(100),
+        offset: z.number().int().min(0).optional().describe('Items to skip for pagination').default(0),
         filterCategory: z
           .enum(['library-export', 'ui-component', 'internal-unused', 'all'])
           .optional()
@@ -200,11 +180,7 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
           .optional()
           .describe('Exclude items from packages/* directories')
           .default(false),
-        excludeCoreTypes: z
-          .array(z.string())
-          .optional()
-          .describe('Core types to exclude from results')
-          .default([]),
+        excludeCoreTypes: z.array(z.string()).optional().describe('Core types to exclude from results').default([]),
       },
     },
     async ({

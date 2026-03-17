@@ -160,16 +160,8 @@ export const createSaveSessionNoteTool = (server: McpServer): void => {
         topic: z.string().min(3).max(100).describe('Short topic label for the note'),
         content: z.string().min(10).describe('Full observation text'),
         category: z.enum(NOTE_CATEGORIES).describe('Category: architectural, bug, insight, decision, risk, or todo'),
-        severity: z
-          .enum(NOTE_SEVERITIES)
-          .optional()
-          .default('info')
-          .describe('Severity level'),
-        aboutNodeIds: z
-          .array(z.string())
-          .optional()
-          .default([])
-          .describe('Code node IDs this note is about'),
+        severity: z.enum(NOTE_SEVERITIES).optional().default('info').describe('Severity level'),
+        aboutNodeIds: z.array(z.string()).optional().default([]).describe('Code node IDs this note is about'),
         expiresInHours: z
           .number()
           .positive()
@@ -282,14 +274,7 @@ export const createRecallSessionNotesTool = (server: McpServer): void => {
         severity: z.enum(NOTE_SEVERITIES).optional().describe('Filter by severity: info, warning, critical'),
         sessionId: z.string().optional().describe('Filter by session ID'),
         agentId: z.string().optional().describe('Filter by agent ID'),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(50)
-          .optional()
-          .default(10)
-          .describe('Maximum number of notes to return'),
+        limit: z.number().int().min(1).max(50).optional().default(10).describe('Maximum number of notes to return'),
         minSimilarity: z
           .number()
           .min(0)

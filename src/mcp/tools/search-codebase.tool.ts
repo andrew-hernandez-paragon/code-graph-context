@@ -13,7 +13,6 @@ import { TraversalHandler } from '../handlers/traversal.handler.js';
 import {
   createEmptyResponse,
   createErrorResponse,
-  createSuccessResponse,
   debugLog,
   sanitizeNumericInput,
   resolveProjectIdOrError,
@@ -34,18 +33,9 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           .optional()
           .describe('Maximum relationship traversal depth')
           .default(DEFAULTS.traversalDepth),
-        maxNodesPerChain: z
-          .number()
-          .int()
-          .optional()
-          .describe('Maximum chains to show per depth level')
-          .default(5),
+        maxNodesPerChain: z.number().int().optional().describe('Maximum chains to show per depth level').default(5),
         skip: z.number().int().optional().describe('Results to skip for pagination').default(0),
-        includeCode: z
-          .boolean()
-          .optional()
-          .describe('Include source code snippets in results')
-          .default(true),
+        includeCode: z.boolean().optional().describe('Include source code snippets in results').default(true),
         snippetLength: z
           .number()
           .int()
@@ -58,11 +48,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           .optional()
           .describe('Number of top vector matches; best match is traversed, others shown as alternatives')
           .default(3),
-        minSimilarity: z
-          .number()
-          .optional()
-          .describe('Minimum similarity score threshold')
-          .default(0.65),
+        minSimilarity: z.number().optional().describe('Minimum similarity score threshold').default(0.65),
         useWeightedTraversal: z
           .boolean()
           .optional()

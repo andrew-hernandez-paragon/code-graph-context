@@ -273,10 +273,7 @@ export const createSwarmCompleteTaskTool = (server: McpServer): void => {
           .enum(['complete', 'fail', 'request_review', 'approve', 'reject', 'retry'])
           .describe('Action to take on the task'),
         summary: z.string().optional().describe('What was done (required for complete/request_review)'),
-        artifacts: z
-          .record(z.unknown())
-          .optional()
-          .describe('Artifacts produced by this task'),
+        artifacts: z.record(z.unknown()).optional().describe('Artifacts produced by this task'),
         filesChanged: z.array(z.string()).optional().describe('Files modified'),
         linesAdded: z.number().int().optional().describe('Lines added'),
         linesRemoved: z.number().int().optional().describe('Lines removed'),

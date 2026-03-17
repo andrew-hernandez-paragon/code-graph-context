@@ -105,15 +105,9 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           .optional()
           .describe('Custom glob patterns for config files')
           .default(CONFIG_FILE_PATTERNS.defaultGlobs),
-        projectId: z
-          .string()
-          .optional()
-          .describe('Project ID override; auto-generated from projectPath if omitted'),
+        projectId: z.string().optional().describe('Project ID override; auto-generated from projectPath if omitted'),
         clearExisting: z.boolean().optional().describe('Clear existing graph data for this project first'),
-        excludeNodeTypes: z
-          .array(z.string())
-          .optional()
-          .describe('Node types to skip during parsing'),
+        excludeNodeTypes: z.array(z.string()).optional().describe('Node types to skip during parsing'),
         projectType: z
           .enum(['nestjs', 'fairsquare', 'both', 'vanilla', 'auto'])
           .optional()
@@ -139,11 +133,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           .optional()
           .default(false)
           .describe('Start file watching after parse completes; requires async: false'),
-        watchDebounceMs: z
-          .number()
-          .optional()
-          .default(1000)
-          .describe('Debounce delay for watch mode in milliseconds'),
+        watchDebounceMs: z.number().optional().default(1000).describe('Debounce delay for watch mode in milliseconds'),
       },
     },
     async ({

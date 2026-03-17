@@ -10,7 +10,7 @@ import { z } from 'zod';
 
 import { NaturalLanguageToCypherService } from '../../core/embeddings/natural-language-to-cypher.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA, MESSAGES, FILE_PATHS } from '../constants.js';
+import { TOOL_NAMES, TOOL_METADATA, FILE_PATHS } from '../constants.js';
 import {
   createEmptyResponse,
   createErrorResponse,

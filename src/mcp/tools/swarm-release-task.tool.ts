@@ -3,8 +3,8 @@ import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 import { SwarmReleaseHandler, SwarmAbandonHandler } from '../handlers/swarm/index.js';
+import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 
 export const createSwarmReleaseTaskTool = (server: McpServer): void => {
   server.registerTool(
@@ -17,11 +17,7 @@ export const createSwarmReleaseTaskTool = (server: McpServer): void => {
         taskId: z.string().describe('Task ID to release'),
         agentId: z.string().describe('Your agent identifier'),
         reason: z.string().optional().describe('Reason for releasing or abandoning'),
-        trackAbandonment: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Track as abandonment for retry metrics'),
+        trackAbandonment: z.boolean().optional().default(false).describe('Track as abandonment for retry metrics'),
       },
     },
     async ({ projectId, taskId, agentId, reason, trackAbandonment = false }) => {

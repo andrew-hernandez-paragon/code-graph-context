@@ -91,31 +91,13 @@ export const createSwarmPheromoneTool = (server: McpServer): void => {
           .string()
           .optional()
           .describe('File path to mark (alternative to nodeId — auto-resolves to SourceFile node)'),
-        type: z
-          .enum(PHEROMONE_TYPES as [string, ...string[]])
-          .describe('Pheromone type'),
-        intensity: z
-          .number()
-          .min(0)
-          .max(1)
-          .optional()
-          .default(1.0)
-          .describe('Pheromone intensity'),
+        type: z.enum(PHEROMONE_TYPES as [string, ...string[]]).describe('Pheromone type'),
+        intensity: z.number().min(0).max(1).optional().default(1.0).describe('Pheromone intensity'),
         agentId: z.string().describe('Agent leaving the pheromone'),
         swarmId: z.string().describe('Swarm ID for grouping related agents'),
-        sessionId: z
-          .string()
-          .optional()
-          .describe('Session identifier for cross-session recovery'),
-        data: z
-          .record(z.unknown())
-          .optional()
-          .describe('Metadata to attach to the pheromone'),
-        remove: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Remove instead of create/update'),
+        sessionId: z.string().optional().describe('Session identifier for cross-session recovery'),
+        data: z.record(z.unknown()).optional().describe('Metadata to attach to the pheromone'),
+        remove: z.boolean().optional().default(false).describe('Remove instead of create/update'),
       },
     },
     async ({

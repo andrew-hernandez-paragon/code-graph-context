@@ -3,8 +3,8 @@ import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 import { SwarmAdvanceHandler } from '../handlers/swarm/index.js';
+import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 
 export const createSwarmAdvanceTaskTool = (server: McpServer): void => {
   server.registerTool(
@@ -54,11 +54,7 @@ export const createSwarmAdvanceTaskTool = (server: McpServer): void => {
           );
         }
 
-        const { error, data } = await new SwarmAdvanceHandler(neo4jService).start(
-          resolvedProjectId,
-          taskId,
-          agentId,
-        );
+        const { error, data } = await new SwarmAdvanceHandler(neo4jService).start(resolvedProjectId, taskId, agentId);
 
         if (error) {
           return createErrorResponse(

@@ -111,23 +111,14 @@ export const createSwarmSenseTool = (server: McpServer): void => {
           .optional()
           .describe('Filter by pheromone types'),
         nodeIds: z.array(z.string()).optional().describe('Filter by specific node IDs'),
-        filePaths: z
-          .array(z.string())
-          .optional()
-          .describe('Filter by file paths (resolves to SourceFile nodeIds)'),
-        agentIds: z
-          .array(z.string())
-          .optional()
-          .describe('Filter by specific agent IDs'),
+        filePaths: z.array(z.string()).optional().describe('Filter by file paths (resolves to SourceFile nodeIds)'),
+        agentIds: z.array(z.string()).optional().describe('Filter by specific agent IDs'),
         swarmId: z.string().optional().describe('Filter by swarm ID'),
         excludeAgentId: z
           .string()
           .optional()
           .describe('Exclude pheromones from this agent (see what others are doing)'),
-        sessionId: z
-          .string()
-          .optional()
-          .describe('Filter by session ID for context recovery'),
+        sessionId: z.string().optional().describe('Filter by session ID for context recovery'),
         minIntensity: z
           .number()
           .min(0)
@@ -135,20 +126,9 @@ export const createSwarmSenseTool = (server: McpServer): void => {
           .optional()
           .default(0.3)
           .describe('Minimum effective intensity after decay'),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(500)
-          .optional()
-          .default(50)
-          .describe('Maximum pheromones to return'),
+        limit: z.number().int().min(1).max(500).optional().default(50).describe('Maximum pheromones to return'),
         includeStats: z.boolean().optional().default(false).describe('Include summary statistics by pheromone type'),
-        cleanup: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Remove fully decayed pheromones'),
+        cleanup: z.boolean().optional().default(false).describe('Remove fully decayed pheromones'),
       },
     },
     async ({

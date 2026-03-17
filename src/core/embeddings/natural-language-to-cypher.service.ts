@@ -106,33 +106,35 @@ CONTAINS (file→declaration), HAS_MEMBER (class→method/property), HAS_PARAMET
       const content = fs.readFileSync(this.schemaPath, 'utf-8');
       const schema = JSON.parse(content);
 
-      if (!schema || !schema.nodeTypes) {
+      if (!schema?.nodeTypes) {
         return 'No schema available.';
       }
 
       // Format node types with properties
-      const nodeTypeLines = schema.nodeTypes
-        ?.map((n: any) => `  ${n.label} (${n.count} nodes) — properties: ${(n.properties ?? []).join(', ')}`)
-        .join('\n') ?? 'none';
+      const nodeTypeLines =
+        schema.nodeTypes
+          ?.map((n: any) => `  ${n.label} (${n.count} nodes) — properties: ${(n.properties ?? []).join(', ')}`)
+          .join('\n') ?? 'none';
 
       // Format relationship types with connection patterns
-      const relTypeLines = schema.relationshipTypes
-        ?.map((r: any) => {
-          const conns = (r.connections ?? []).map((c: any) => `${c.from}→${c.to}`).join(', ');
-          return `  ${r.type} (${r.count}) — ${conns}`;
-        })
-        .join('\n') ?? 'none';
+      const relTypeLines =
+        schema.relationshipTypes
+          ?.map((r: any) => {
+            const conns = (r.connections ?? []).map((c: any) => `${c.from}→${c.to}`).join(', ');
+            return `  ${r.type} (${r.count}) — ${conns}`;
+          })
+          .join('\n') ?? 'none';
 
       // Format semantic types
       const semanticTypeList: string[] = schema.semanticTypes?.map((s: any) => s.type) ?? [];
-      const semTypeLines = schema.semanticTypes
-        ?.map((s: any) => `  ${s.type} (on ${s.label}, ${s.count} nodes)`)
-        .join('\n') ?? 'none';
+      const semTypeLines =
+        schema.semanticTypes?.map((s: any) => `  ${s.type} (on ${s.label}, ${s.count} nodes)`).join('\n') ?? 'none';
 
       // Format common patterns
-      const patternLines = schema.commonPatterns
-        ?.map((p: any) => `  (${p.from})-[:${p.relationship}]->(${p.to}) × ${p.count}`)
-        .join('\n') ?? 'none';
+      const patternLines =
+        schema.commonPatterns
+          ?.map((p: any) => `  (${p.from})-[:${p.relationship}]->(${p.to}) × ${p.count}`)
+          .join('\n') ?? 'none';
 
       // Cache categorized semantic types for dynamic example generation
       this.cachedSemanticTypes = this.categorizeSemanticTypes(semanticTypeList);

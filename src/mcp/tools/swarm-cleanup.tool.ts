@@ -121,11 +121,7 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
           .optional()
           .default(true)
           .describe('Also delete SwarmTask nodes (only applies when swarmId is provided)'),
-        keepTypes: z
-          .array(z.string())
-          .optional()
-          .default(['warning'])
-          .describe('Pheromone types to preserve'),
+        keepTypes: z.array(z.string()).optional().default(['warning']).describe('Pheromone types to preserve'),
         dryRun: z.boolean().optional().default(false).describe('Preview what would be deleted without deleting'),
       },
     },

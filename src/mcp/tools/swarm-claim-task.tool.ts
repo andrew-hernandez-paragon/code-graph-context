@@ -11,11 +11,17 @@ import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createEmptyResponse, createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { SwarmClaimHandler } from '../handlers/swarm/index.js';
+import {
+  createEmptyResponse,
+  createErrorResponse,
+  createSuccessResponse,
+  resolveProjectIdOrError,
+  debugLog,
+} from '../utils.js';
 
 import { TASK_TYPES, TASK_PRIORITIES } from './swarm-constants.js';
 import { PENDING_MESSAGES_FOR_AGENT_QUERY, AUTO_ACKNOWLEDGE_QUERY } from './swarm-message.tool.js';
-import { SwarmClaimHandler } from '../handlers/swarm/index.js';
 
 export const createSwarmClaimTaskTool = (server: McpServer): void => {
   server.registerTool(
@@ -31,10 +37,7 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
           .string()
           .optional()
           .describe('Specific task ID to claim (if omitted, claims highest priority available task)'),
-        types: z
-          .array(z.enum(TASK_TYPES))
-          .optional()
-          .describe('Filter by task types'),
+        types: z.array(z.enum(TASK_TYPES)).optional().describe('Filter by task types'),
         minPriority: z
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()

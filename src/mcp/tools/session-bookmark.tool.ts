@@ -8,7 +8,13 @@ import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createEmptyResponse, createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import {
+  createEmptyResponse,
+  createErrorResponse,
+  createSuccessResponse,
+  resolveProjectIdOrError,
+  debugLog,
+} from '../utils.js';
 
 /**
  * Neo4j query to create a SessionBookmark node and link to code nodes

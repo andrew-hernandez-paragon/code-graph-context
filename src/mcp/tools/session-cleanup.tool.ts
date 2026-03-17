@@ -81,11 +81,7 @@ export const createCleanupSessionTool = (server: McpServer): void => {
           .optional()
           .default(3)
           .describe('Recent bookmarks to keep per session'),
-        dryRun: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe('Preview what would be deleted without deleting'),
+        dryRun: z.boolean().optional().default(false).describe('Preview what would be deleted without deleting'),
       },
     },
     async ({ projectId, keepBookmarks = 3, dryRun = false }) => {
