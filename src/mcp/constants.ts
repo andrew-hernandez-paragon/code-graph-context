@@ -50,6 +50,8 @@ export const TOOL_NAMES = {
   recallSessionNotes: 'recall_session_notes',
   cleanupSession: 'cleanup_session',
   swarmMessage: 'swarm_message',
+  sessionSave: 'session_save',
+  sessionRecall: 'session_recall',
 } as const;
 
 // Tool Metadata
@@ -182,6 +184,14 @@ Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_ta
   [TOOL_NAMES.cleanupSession]: {
     title: 'Cleanup Session',
     description: `Session persistence tool. Remove expired session notes and old bookmarks, keeping the most recent per session.`,
+  },
+  [TOOL_NAMES.sessionSave]: {
+    title: 'Session Save',
+    description: `Session persistence tool. Save session context — auto-detects bookmark vs note based on input. Provide workingSetNodeIds for a bookmark, topic+content for a note, or both for a bookmark with an attached note.`,
+  },
+  [TOOL_NAMES.sessionRecall]: {
+    title: 'Session Recall',
+    description: `Session persistence tool. Retrieve saved session context. Provide query for semantic note search, or sessionId to restore the latest bookmark and all notes for that session.`,
   },
   [TOOL_NAMES.swarmMessage]: {
     title: 'Swarm Message',
