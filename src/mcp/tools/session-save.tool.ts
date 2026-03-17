@@ -107,8 +107,7 @@ const SET_NOTE_EMBEDDING_QUERY = `
 const generateBookmarkId = (): string =>
   `bookmark_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 
-const generateNoteId = (): string =>
-  `note_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+const generateNoteId = (): string => `note_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 
 // ---------------------------------------------------------------------------
 // Tool registration
@@ -142,11 +141,7 @@ export const createSessionSaveTool = (server: McpServer): void => {
           .enum(['architectural', 'bug', 'insight', 'decision', 'risk', 'todo'])
           .optional()
           .describe('Note category'),
-        severity: z
-          .enum(['info', 'warning', 'critical'])
-          .optional()
-          .default('info')
-          .describe('Note severity'),
+        severity: z.enum(['info', 'warning', 'critical']).optional().default('info').describe('Note severity'),
         aboutNodeIds: z.array(z.string()).optional().describe('Code node IDs this note is about'),
         expiresInHours: z.number().optional().describe('Auto-expire note after N hours'),
         metadata: z.string().optional().describe('Additional structured data as JSON string'),
@@ -204,33 +199,30 @@ export const createSessionSaveTool = (server: McpServer): void => {
         }
       }
 
-      // Validate required fields per operation
-      if ((effectiveType === 'bookmark' || effectiveType === 'both') && !summary) {
-        await neo4jService.close();
-        return createErrorResponse('summary is required when saving a bookmark.');
-      }
-      if ((effectiveType === 'bookmark' || effectiveType === 'both') && !taskContext) {
-        await neo4jService.close();
-        return createErrorResponse('taskContext is required when saving a bookmark.');
-      }
-      if ((effectiveType === 'bookmark' || effectiveType === 'both') && (!workingSetNodeIds || workingSetNodeIds.length === 0)) {
-        await neo4jService.close();
-        return createErrorResponse('workingSetNodeIds is required when saving a bookmark.');
-      }
-      if ((effectiveType === 'note' || effectiveType === 'both') && !topic) {
-        await neo4jService.close();
-        return createErrorResponse('topic is required when saving a note.');
-      }
-      if ((effectiveType === 'note' || effectiveType === 'both') && !content) {
-        await neo4jService.close();
-        return createErrorResponse('content is required when saving a note.');
-      }
-      if ((effectiveType === 'note' || effectiveType === 'both') && !category) {
-        await neo4jService.close();
-        return createErrorResponse('category is required when saving a note.');
-      }
-
       try {
+        // Validate required fields per operation
+        if ((effectiveType === 'bookmark' || effectiveType === 'both') && !summary) {
+          return createErrorResponse('summary is required when saving a bookmark.');
+        }
+        if ((effectiveType === 'bookmark' || effectiveType === 'both') && !taskContext) {
+          return createErrorResponse('taskContext is required when saving a bookmark.');
+        }
+        if (
+          (effectiveType === 'bookmark' || effectiveType === 'both') &&
+          (!workingSetNodeIds || workingSetNodeIds.length === 0)
+        ) {
+          return createErrorResponse('workingSetNodeIds is required when saving a bookmark.');
+        }
+        if ((effectiveType === 'note' || effectiveType === 'both') && !topic) {
+          return createErrorResponse('topic is required when saving a note.');
+        }
+        if ((effectiveType === 'note' || effectiveType === 'both') && !content) {
+          return createErrorResponse('content is required when saving a note.');
+        }
+        if ((effectiveType === 'note' || effectiveType === 'both') && !category) {
+          return createErrorResponse('category is required when saving a note.');
+        }
+
         const result: Record<string, unknown> = { success: true, projectId: resolvedProjectId, sessionId, agentId };
 
         // ── Create bookmark ──────────────────────────────────────────────────
@@ -252,7 +244,11 @@ export const createSessionSaveTool = (server: McpServer): void => {
           });
 
           if (bookmarkRows.length === 0) {
-            return createErrorResponse('Failed to create session bookmark.');
+            return createErrorResponse(
+              effectiveType === 'both'
+                ? 'Failed to create session bookmark; note was not saved.'
+                : 'Failed to create session bookmark.',
+            );
           }
 
           const bm = bookmarkRows[0];

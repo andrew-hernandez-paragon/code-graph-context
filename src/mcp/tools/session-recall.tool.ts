@@ -9,7 +9,13 @@ import { z } from 'zod';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createEmptyResponse, createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import {
+  createEmptyResponse,
+  createErrorResponse,
+  createSuccessResponse,
+  resolveProjectIdOrError,
+  debugLog,
+} from '../utils.js';
 
 const NOTE_CATEGORIES = ['architectural', 'bug', 'insight', 'decision', 'risk', 'todo'] as const;
 const NOTE_SEVERITIES = ['info', 'warning', 'critical'] as const;
@@ -143,33 +149,11 @@ export const createSessionRecallTool = (server: McpServer): void => {
         sessionId: z.string().optional().describe('Session ID to restore (latest bookmark + all notes)'),
         agentId: z.string().optional().describe('Filter by agent ID'),
         query: z.string().optional().describe('Semantic search query for notes'),
-        category: z
-          .enum(NOTE_CATEGORIES)
-          .optional()
-          .describe('Filter notes by category'),
-        severity: z
-          .enum(NOTE_SEVERITIES)
-          .optional()
-          .describe('Filter notes by severity'),
-        includeCode: z
-          .boolean()
-          .optional()
-          .default(true)
-          .describe('Include source code for working set nodes'),
-        snippetLength: z
-          .number()
-          .int()
-          .optional()
-          .default(500)
-          .describe('Code snippet character limit'),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(50)
-          .optional()
-          .default(10)
-          .describe('Maximum notes to return'),
+        category: z.enum(NOTE_CATEGORIES).optional().describe('Filter notes by category'),
+        severity: z.enum(NOTE_SEVERITIES).optional().describe('Filter notes by severity'),
+        includeCode: z.boolean().optional().default(true).describe('Include source code for working set nodes'),
+        snippetLength: z.number().int().optional().default(500).describe('Code snippet character limit'),
+        limit: z.number().int().min(1).max(50).optional().default(10).describe('Maximum notes to return'),
         minSimilarity: z
           .number()
           .min(0)
@@ -332,7 +316,7 @@ export const createSessionRecallTool = (server: McpServer): void => {
               : `No notes found for project ${resolvedProjectId}`,
             query
               ? 'Try a different query, or lower minSimilarity.'
-              : 'Save notes with save_session_note, or bookmarks with save_session_bookmark.',
+              : 'Save notes or bookmarks with session_save.',
           );
         }
 
