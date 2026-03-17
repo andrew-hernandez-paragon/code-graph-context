@@ -236,7 +236,7 @@ async function getTaskStateError(
   let suggestion = '';
   if (action === 'complete' || action === 'fail') {
     if (state.status === 'available') {
-      suggestion = 'You must claim the task first using swarm_claim_task.';
+      suggestion = 'You must claim the task first using swarm_claim_task, then start it or use startImmediately=true.';
     } else if (!isOwner) {
       suggestion = `Task is claimed by "${claimedBy}", not you.`;
     } else if (state.status === 'completed') {

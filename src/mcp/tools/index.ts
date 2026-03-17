@@ -20,6 +20,7 @@ import { createCleanupSessionTool } from './session-cleanup.tool.js';
 import { createRecallSessionNotesTool, createSaveSessionNoteTool } from './session-note.tool.js';
 import { createStartWatchProjectTool } from './start-watch-project.tool.js';
 import { createStopWatchProjectTool } from './stop-watch-project.tool.js';
+import { createSwarmAdvanceTaskTool } from './swarm-advance-task.tool.js';
 import { createSwarmClaimTaskTool } from './swarm-claim-task.tool.js';
 import { createSwarmCleanupTool } from './swarm-cleanup.tool.js';
 import { createSwarmCompleteTaskTool } from './swarm-complete-task.tool.js';
@@ -27,6 +28,7 @@ import { createSwarmGetTasksTool } from './swarm-get-tasks.tool.js';
 import { createSwarmMessageTool } from './swarm-message.tool.js';
 import { createSwarmPheromoneTool } from './swarm-pheromone.tool.js';
 import { createSwarmPostTaskTool } from './swarm-post-task.tool.js';
+import { createSwarmReleaseTaskTool } from './swarm-release-task.tool.js';
 import { createSwarmSenseTool } from './swarm-sense.tool.js';
 import { createTestNeo4jConnectionTool } from './test-neo4j-connection.tool.js';
 import { createTraverseFromNodeTool } from './traverse-from-node.tool.js';
@@ -90,6 +92,8 @@ export const registerAllTools = (server: McpServer): void => {
   // Register swarm task tools (blackboard for explicit task management)
   createSwarmPostTaskTool(server);
   createSwarmClaimTaskTool(server);
+  createSwarmAdvanceTaskTool(server);
+  createSwarmReleaseTaskTool(server);
   createSwarmCompleteTaskTool(server);
   createSwarmGetTasksTool(server);
 

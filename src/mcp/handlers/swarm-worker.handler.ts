@@ -88,13 +88,12 @@ swarm_sense({
 \`\`\`
 
 ### 2. Claim a Task
-Claim the highest-priority available task:
+Claim and start the highest-priority available task:
 \`\`\`
 swarm_claim_task({
   projectId: "${config.projectId}",
   swarmId: "${config.swarmId}",
-  agentId: "${agentId}",
-  action: "claim"
+  agentId: "${agentId}"
 })
 \`\`\`
 
@@ -118,16 +117,6 @@ swarm_pheromone({
   type: "modifying",
   agentId: "${agentId}",
   swarmId: "${config.swarmId}"
-})
-\`\`\`
-
-### 4. Start the Task
-\`\`\`
-swarm_claim_task({
-  projectId: "${config.projectId}",
-  taskId: "<claimed task id>",
-  agentId: "${agentId}",
-  action: "start"
 })
 \`\`\`
 

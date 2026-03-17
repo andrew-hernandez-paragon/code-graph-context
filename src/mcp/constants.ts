@@ -40,6 +40,8 @@ export const TOOL_NAMES = {
   swarmCleanup: 'swarm_cleanup',
   swarmPostTask: 'swarm_post_task',
   swarmClaimTask: 'swarm_claim_task',
+  swarmReleaseTask: 'swarm_release_task',
+  swarmAdvanceTask: 'swarm_advance_task',
   swarmCompleteTask: 'swarm_complete_task',
   swarmGetTasks: 'swarm_get_tasks',
   saveSessionBookmark: 'save_session_bookmark',
@@ -141,9 +143,17 @@ Auto-excludes NestJS entry points. Use filterCategory=internal-unused for action
   },
   [TOOL_NAMES.swarmClaimTask]: {
     title: 'Swarm Claim Task',
-    description: `Swarm orchestration tool. Claim a task from the queue. Default action claim_and_start is recommended. Without taskId, claims highest-priority available task.
+    description: `Swarm orchestration tool. Claim a task from the queue. Without taskId, claims highest-priority available task. Set startImmediately=false to claim without starting.
 
-Flow: claim_and_start → do work → swarm_complete_task. Use abandon for stuck tasks, force_start for recovery.`,
+Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_task to give up work, swarm_advance_task for state transitions.`,
+  },
+  [TOOL_NAMES.swarmReleaseTask]: {
+    title: 'Swarm Release Task',
+    description: `Swarm orchestration tool. Release or abandon a claimed task. Use when an agent can no longer complete a task. Set trackAbandonment=true to record the abandonment for retry tracking.`,
+  },
+  [TOOL_NAMES.swarmAdvanceTask]: {
+    title: 'Swarm Advance Task',
+    description: `Swarm orchestration tool. Start or force-start a claimed task. Use after claiming with startImmediately=false, or set force=true to recover from a stuck claimed state.`,
   },
   [TOOL_NAMES.swarmCompleteTask]: {
     title: 'Swarm Complete Task',

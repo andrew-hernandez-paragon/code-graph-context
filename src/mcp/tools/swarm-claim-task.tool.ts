@@ -2,14 +2,8 @@
  * Swarm Claim Task Tool
  * Allow an agent to claim an available task from the blackboard
  *
- * Phase 1 improvements:
- * - Atomic claim_and_start action (eliminates race window)
- * - Retry logic on race loss
- * - Recovery actions (abandon, force_start)
- *
- * Phase 2 refactor:
- * - Handlers extracted to src/mcp/handlers/swarm/
- * - Shared queries centralized in queries.ts
+ * Handles claim and claim_and_start only.
+ * Release, abandon, force_start, and start actions are handled by dedicated tools.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -21,12 +15,7 @@ import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, de
 
 import { TASK_TYPES, TASK_PRIORITIES } from './swarm-constants.js';
 import { PENDING_MESSAGES_FOR_AGENT_QUERY, AUTO_ACKNOWLEDGE_QUERY } from './swarm-message.tool.js';
-import {
-  SwarmClaimHandler,
-  SwarmReleaseHandler,
-  SwarmAbandonHandler,
-  SwarmAdvanceHandler,
-} from '../handlers/swarm/index.js';
+import { SwarmClaimHandler } from '../handlers/swarm/index.js';
 
 export const createSwarmClaimTaskTool = (server: McpServer): void => {
   server.registerTool(
@@ -50,17 +39,10 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()
           .describe('Minimum priority when auto-selecting'),
-        action: z
-          .enum(['claim', 'claim_and_start', 'start', 'release', 'abandon', 'force_start'])
-          .optional()
-          .default('claim_and_start')
-          .describe(
-            'claim_and_start: atomic claim+start (recommended); release/abandon: give up task; force_start: recover stuck state',
-          ),
-        releaseReason: z.string().optional().describe('Reason for releasing or abandoning'),
+        startImmediately: z.boolean().optional().default(true).describe('Start the task immediately after claiming'),
       },
     },
-    async ({ projectId, swarmId, agentId, taskId, types, minPriority, action = 'claim_and_start', releaseReason }) => {
+    async ({ projectId, swarmId, agentId, taskId, types, minPriority, startImmediately = true }) => {
       const neo4jService = new Neo4jService();
 
       // Resolve project ID
@@ -72,113 +54,8 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
       const resolvedProjectId = projectResult.projectId;
 
       try {
-        // Handle release action
-        if (action === 'release') {
-          if (!taskId) {
-            return createErrorResponse('taskId is required for release action');
-          }
-
-          const { error, data } = await new SwarmReleaseHandler(neo4jService).release(
-            resolvedProjectId,
-            taskId,
-            agentId,
-            releaseReason,
-          );
-
-          if (error) {
-            return createErrorResponse(
-              `Cannot release task ${taskId}. ` +
-                (data ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}` : 'Task not found.'),
-            );
-          }
-
-          return createSuccessResponse(JSON.stringify({ action: 'released', taskId: data.id }));
-        }
-
-        // Handle abandon action (release with tracking)
-        if (action === 'abandon') {
-          if (!taskId) {
-            return createErrorResponse('taskId is required for abandon action');
-          }
-
-          const { error, data } = await new SwarmAbandonHandler(neo4jService).abandon(
-            resolvedProjectId,
-            taskId,
-            agentId,
-            releaseReason,
-          );
-
-          if (error) {
-            return createErrorResponse(
-              `Cannot abandon task ${taskId}. ` +
-                (data ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}` : 'Task not found.'),
-            );
-          }
-
-          return createSuccessResponse(
-            JSON.stringify({ action: 'abandoned', taskId: data.id, abandonCount: data.abandonCount }),
-          );
-        }
-
-        // Handle force_start action (recovery from stuck claimed state)
-        if (action === 'force_start') {
-          if (!taskId) {
-            return createErrorResponse('taskId is required for force_start action');
-          }
-
-          const { error, data } = await new SwarmAdvanceHandler(neo4jService).forceStart(
-            resolvedProjectId,
-            taskId,
-            agentId,
-            releaseReason,
-          );
-
-          if (error) {
-            return createErrorResponse(
-              `Cannot force_start task ${taskId}. ` +
-                (data
-                  ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}. ` +
-                    `force_start requires status=claimed|available and you must be the claimant.`
-                  : 'Task not found.'),
-            );
-          }
-
-          return createSuccessResponse(
-            JSON.stringify({ action: 'force_started', taskId: data.id, status: 'in_progress' }),
-          );
-        }
-
-        // Handle start action
-        if (action === 'start') {
-          if (!taskId) {
-            return createErrorResponse('taskId is required for start action');
-          }
-
-          const { error, data } = await new SwarmAdvanceHandler(neo4jService).start(
-            resolvedProjectId,
-            taskId,
-            agentId,
-          );
-
-          if (error) {
-            return createErrorResponse(
-              `Cannot start task ${taskId}. ` +
-                (data
-                  ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}. ` +
-                    `Tip: Use action="force_start" to recover from stuck claimed state, ` +
-                    `or action="abandon" to release the task.`
-                  : 'Task not found.'),
-            );
-          }
-
-          return createSuccessResponse(
-            JSON.stringify({ action: 'started', taskId: data.id, status: 'in_progress' }),
-          );
-        }
-
-        // Handle claim and claim_and_start actions
         const claimHandler = new SwarmClaimHandler(neo4jService);
-        const targetStatus = action === 'claim_and_start' ? 'in_progress' : 'claimed';
+        const targetStatus = startImmediately ? 'in_progress' : 'claimed';
 
         let claimResult;
 
@@ -207,7 +84,7 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
         }
 
         const task = claimResult.data;
-        const actionLabel = action === 'claim_and_start' ? 'claimed_and_started' : 'claimed';
+        const actionLabel = startImmediately ? 'claimed_and_started' : 'claimed';
 
         // Extract valid targets (resolved via :TARGETS relationship)
         const resolvedTargets = (task.targets || [])
