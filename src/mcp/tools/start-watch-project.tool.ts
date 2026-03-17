@@ -20,7 +20,7 @@ const inputSchema = z.object({
   projectPath: z.string().describe('Path to the TypeScript project root directory'),
   tsconfigPath: z.string().describe('Path to TypeScript project tsconfig.json file'),
   projectId: z.string().optional().describe('Optional project ID override (auto-generated from path if omitted)'),
-  debounceMs: z.number().optional().default(1000).describe('Debounce delay in milliseconds (default: 1000)'),
+  debounceMs: z.number().optional().default(1000).describe('Debounce delay in milliseconds'),
 });
 
 export const createStartWatchProjectTool = (server: McpServer): void => {

@@ -135,7 +135,7 @@ export const createSaveSessionBookmarkTool = (server: McpServer): void => {
         projectId: z.string().describe('Project ID, name, or path (e.g., "backend" or "proj_a1b2c3d4e5f6")'),
         sessionId: z.string().describe('Unique session identifier (e.g., conversation ID) for cross-session recovery'),
         agentId: z.string().describe('Agent identifier for this bookmark'),
-        summary: z.string().min(10).describe('Brief summary of current work state (min 10 characters)'),
+        summary: z.string().min(10).describe('Brief summary of current work state'),
         workingSetNodeIds: z
           .array(z.string())
           .describe('Code node IDs currently being focused on (from search_codebase or traverse_from_node)'),
@@ -240,7 +240,7 @@ export const createRestoreSessionBookmarkTool = (server: McpServer): void => {
           .boolean()
           .optional()
           .default(true)
-          .describe('Include source code snippets for working set nodes (default: true)'),
+          .describe('Include source code snippets for working set nodes'),
         snippetLength: z
           .number()
           .int()
@@ -248,7 +248,7 @@ export const createRestoreSessionBookmarkTool = (server: McpServer): void => {
           .max(5000)
           .optional()
           .default(500)
-          .describe('Maximum characters per code snippet (default: 500)'),
+          .describe('Max characters per code snippet'),
       },
     },
     async ({ projectId, sessionId, agentId, includeCode = true, snippetLength = 500 }) => {

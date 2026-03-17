@@ -157,19 +157,19 @@ export const createSaveSessionNoteTool = (server: McpServer): void => {
         projectId: z.string().describe('Project ID, name, or path (e.g., "backend" or "proj_a1b2c3d4e5f6")'),
         sessionId: z.string().describe('Session identifier (e.g., conversation ID or session name)'),
         agentId: z.string().describe('Agent identifier that is saving the note'),
-        topic: z.string().min(3).max(100).describe('Short topic label for the note (3-100 characters)'),
-        content: z.string().min(10).describe('Full observation text (minimum 10 characters)'),
+        topic: z.string().min(3).max(100).describe('Short topic label for the note'),
+        content: z.string().min(10).describe('Full observation text'),
         category: z.enum(NOTE_CATEGORIES).describe('Category: architectural, bug, insight, decision, risk, or todo'),
         severity: z
           .enum(NOTE_SEVERITIES)
           .optional()
           .default('info')
-          .describe('Severity level: info (default), warning, or critical'),
+          .describe('Severity level'),
         aboutNodeIds: z
           .array(z.string())
           .optional()
           .default([])
-          .describe('Code node IDs this note is about (links to graph nodes via [:ABOUT])'),
+          .describe('Code node IDs this note is about'),
         expiresInHours: z
           .number()
           .positive()
@@ -289,14 +289,14 @@ export const createRecallSessionNotesTool = (server: McpServer): void => {
           .max(50)
           .optional()
           .default(10)
-          .describe('Maximum number of notes to return (default: 10, max: 50)'),
+          .describe('Maximum number of notes to return'),
         minSimilarity: z
           .number()
           .min(0)
           .max(1)
           .optional()
           .default(0.3)
-          .describe('Minimum similarity score for vector search (0.0-1.0, default: 0.3)'),
+          .describe('Minimum similarity score for vector search'),
       },
     },
     async ({ projectId, query, category, severity, sessionId, agentId, limit = 10, minSimilarity = 0.3 }) => {
