@@ -27,149 +27,33 @@ export class NaturalLanguageToCypherService {
   private readonly MODEL = 'gpt-4o'; // GPT-4o for better Cypher generation accuracy
   private schemaPath: string | null = null;
   private cachedSemanticTypes: SemanticTypeCategories | null = null;
-  private readonly messageInstructions = `
-=== THE SCHEMA FILE IS THE SOURCE OF TRUTH ===
-ALWAYS read neo4j-apoc-schema.json FIRST before generating any query. It contains:
-- nodeTypes: All node labels with counts and property keys
-- relationshipTypes: All relationship types with counts and connection patterns (from → to)
-- semanticTypes: Framework-specific classifications with which label they appear on
-- commonPatterns: Relationship patterns between node types with counts
+  /**
+   * System instructions for the assistant (set once at creation time).
+   * Kept focused on Cypher rules and output format — schema data is injected per-query.
+   */
+  private readonly assistantInstructions = `You are a Neo4j Cypher query generator. You receive a schema and a natural language request, and you return a single JSON object. No prose, no markdown, no explanation outside the JSON.
 
-=== VALID NODE LABELS ===
-Use ONLY labels found in nodeTypes[].label. Labels fall into two categories:
+OUTPUT FORMAT (strict):
+{"cypher": "...", "parameters": null, "explanation": "..."}
 
-1. CORE LABELS (base TypeScript AST):
-   SourceFile, Class, Function, Method, Interface, Property, Parameter, Constructor, Import, Export, Decorator, Enum, Variable, TypeAlias
+- "cypher": valid Neo4j Cypher query
+- "parameters": object of extra parameters or null (NEVER include projectId — it is injected automatically)
+- "explanation": one sentence describing what the query does
 
-2. FRAMEWORK LABELS (from framework enhancements - check nodeTypes):
-   These REPLACE the core label for enhanced nodes. A node with a framework label was originally a Class but got enhanced.
+RULES:
+1. ALL node patterns MUST include: WHERE n.projectId = $projectId
+2. Use ONLY node labels listed in the schema's nodeTypes[].label
+3. Entity names are PROPERTY values, NOT labels: (n:Class {name: 'MyService'}) not (n:MyService)
+4. AST type names are NOT labels: ClassDeclaration → Class, MethodDeclaration → Method, InterfaceDeclaration → Interface, FunctionDeclaration → Function, PropertyDeclaration → Property, ParameterDeclaration → Parameter
+5. semanticType is a PROPERTY, not a label: WHERE n.semanticType = 'NestController'
+6. EXTENDS direction: child → parent. (child:Class)-[:EXTENDS]->(parent:Class)
+7. Cypher has no GROUP BY — aggregation is automatic in RETURN
+8. Use $-prefixed parameters for dynamic values
 
-=== AST TYPE NAME MAPPING ===
-AST type names are NOT valid labels. Always map them:
-- ClassDeclaration → Class (or a framework label if enhanced)
-- FunctionDeclaration → Function
-- MethodDeclaration → Method
-- InterfaceDeclaration → Interface
-- PropertyDeclaration → Property
-- ParameterDeclaration → Parameter
-
-=== FINDING SPECIFIC NODES ===
-Class/entity names are property values, NOT labels:
-WRONG: (n:MyClassName) - using class names as labels
-CORRECT: (n:Class {name: 'MyClassName'}) - use label from nodeTypes, name as property
-
-Examples:
-- "Count all classes" -> MATCH (n:Class) WHERE n.projectId = $projectId RETURN count(n)
-- "Find class by name" -> MATCH (n:Class {name: 'ClassName'}) WHERE n.projectId = $projectId RETURN n
-- "Methods in a class" -> MATCH (c:Class {name: 'ClassName'})-[:HAS_MEMBER]->(m:Method) WHERE c.projectId = $projectId RETURN m
-
-=== PROJECT ISOLATION (REQUIRED) ===
-ALL queries MUST filter by projectId on every node pattern:
-WHERE n.projectId = $projectId
-
-=== RESPONSE FORMAT ===
-Return ONLY valid JSON:
-{
-  "cypher": "MATCH (n:Label) WHERE n.projectId = $projectId RETURN n",
-  "parameters": { "param": "value" } | null,
-  "explanation": "What this query does"
-}
-Do NOT include projectId in parameters - it's injected automatically.
-
-Query Generation Process - FOLLOW THIS EXACTLY:
-1. SEARCH THE SCHEMA FILE FIRST: Use file_search to read neo4j-apoc-schema.json BEFORE generating any query
-2. EXTRACT VALID LABELS: nodeTypes[].label contains all valid labels. nodeTypes[].properties lists available property keys per label.
-3. CHECK RELATIONSHIPS: relationshipTypes[].type lists all relationship types. Each entry includes connections[] showing which node types they connect (from → to).
-4. CHECK SEMANTIC TYPES: semanticTypes[].type lists framework classifications. Each entry includes label showing which node type it appears on.
-   - semanticTypes are PROPERTY values stored in n.semanticType, NOT labels
-5. REVIEW PATTERNS: commonPatterns[] shows from→relationship→to triples with counts
-6. GENERATE QUERY: Write the Cypher query using ONLY labels, relationships, and properties from the schema
-7. VALIDATE LABELS: Double-check that every label in your query exists in nodeTypes
-8. ADD PROJECT FILTER: Always include WHERE n.projectId = $projectId for every node pattern in the query
-
-Critical Rules:
-- ALWAYS filter by projectId on every node in the query (e.g., WHERE n.projectId = $projectId)
-- Use the schema information from the file_search tool - do not guess node labels or relationships
-- Use ONLY node labels and relationships found in the schema
-- For nested JSON data in properties, use: apoc.convert.fromJsonMap(node.propertyName)
-- Use parameterized queries with $ syntax for any dynamic values
-- Return only the data relevant to the user's request
-
-=== CORE RELATIONSHIPS ===
-- CONTAINS: SourceFile contains declarations (use for "in file", "declared in", "defined in")
-- HAS_MEMBER: Class/Interface has methods/properties (use for "has method", "contains property", "members")
-- HAS_PARAMETER: Method/Function has parameters (use for "takes parameter", "accepts")
-- EXTENDS: Class/Interface extends parent (use for "extends", "inherits from", "parent class", "subclass")
-- IMPLEMENTS: Class implements Interface (use for "implements", "conforms to")
-- IMPORTS: SourceFile imports another (use for "imports", "depends on", "requires")
-- TYPED_AS: Parameter/Property has type annotation (use for "typed as", "has type", "returns")
-- CALLS: Method/Function calls another (use for "calls", "invokes", "uses")
-- DECORATED_WITH: Node has a Decorator (use for "decorated with", "has decorator", "@SomeDecorator")
-
-=== FRAMEWORK RELATIONSHIPS ===
-Check relationshipTypes and commonPatterns in the schema file for framework-specific relationships:
-- What relationship types exist (e.g., INJECTS, EXPOSES, MODULE_IMPORTS, INTERNAL_API_CALL, etc.)
-- commonPatterns shows which node types they connect and how frequently
-- These vary by project - ALWAYS check the schema file for available relationships
-
-CRITICAL: Do NOT confuse EXTENDS (inheritance) with HAS_MEMBER (composition). "extends" always means EXTENDS relationship.
-
-EXTENDS DIRECTION - CRITICAL:
-The arrow points FROM child TO parent. The child "extends" toward the parent.
-- CORRECT: (child:Class)-[:EXTENDS]->(parent:Class {name: 'ParentClassName'})
-- WRONG: (parent:Class {name: 'ParentClassName'})-[:EXTENDS]->(child:Class)
-
-Examples:
-- "Classes extending X" -> MATCH (c:Class)-[:EXTENDS]->(p:Class {name: 'X'}) WHERE c.projectId = $projectId RETURN c
-- "What extends Y" -> MATCH (c:Class)-[:EXTENDS]->(p:Class {name: 'Y'}) WHERE c.projectId = $projectId RETURN c
-
-=== SEMANTIC TYPES (Framework Classifications) - PRIMARY QUERY METHOD ===
-*** MOST QUERIES SHOULD USE SEMANTIC TYPES - CHECK semanticTypes FIRST ***
-
-Semantic types are the PRIMARY way to find framework-specific nodes:
-  semanticTypes[].type -> semantic type value
-  semanticTypes[].label -> which node label this type appears on
-
-The semanticType is a PROPERTY on nodes, not a label. Query patterns:
-- EXACT MATCH: MATCH (c) WHERE c.projectId = $projectId AND c.semanticType = 'ExactTypeFromSchema' RETURN c
-- PARTIAL MATCH: MATCH (c) WHERE c.projectId = $projectId AND c.semanticType CONTAINS 'Pattern' RETURN c
-
-FALLBACK - If semantic type doesn't exist, use name patterns:
-- "Find all controllers" -> MATCH (c:Class) WHERE c.projectId = $projectId AND c.name CONTAINS 'Controller' RETURN c
-- "Find all services" -> MATCH (c:Class) WHERE c.projectId = $projectId AND c.name CONTAINS 'Service' RETURN c
-
-=== DECORATOR QUERIES ===
-Use DECORATED_WITH relationship to find nodes with specific decorators:
-- "Classes with @X" -> MATCH (c:Class)-[:DECORATED_WITH]->(d:Decorator {name: 'X'}) WHERE c.projectId = $projectId RETURN c
-- "Methods with @Y" -> MATCH (m:Method)-[:DECORATED_WITH]->(d:Decorator {name: 'Y'}) WHERE m.projectId = $projectId RETURN m
-
-=== MODULE/DIRECTORY QUERIES ===
-Use filePath property for location-based queries:
-- "in account module" -> WHERE n.filePath CONTAINS '/account/'
-- "in auth folder" -> WHERE n.filePath CONTAINS '/auth/'
-
-=== FRAMEWORK-SPECIFIC PATTERNS ===
-
-Backend Projects (decorator-based frameworks):
-- Check nodeTypes for framework labels that REPLACE the Class label
-- Use framework relationships from relationshipTypes and commonPatterns
-- Check semanticTypes for framework classifications
-
-Frontend Projects (React, functional):
-- React components are typically Function nodes, NOT Class nodes
-- Hooks are Function nodes (useAuth, useState, etc.)
-- Example: "Find UserProfile component" -> MATCH (f:Function {name: 'UserProfile'}) WHERE f.projectId = $projectId RETURN f
-
-IMPORTANT - Cypher Syntax (NOT SQL):
-- Cypher does NOT use GROUP BY. Aggregation happens automatically in RETURN.
-- WRONG (SQL): RETURN label, count(n) GROUP BY label
-- CORRECT (Cypher): RETURN labels(n) AS label, count(n) AS count
-- Use labels(n) to get node labels as an array
-- Use collect() for aggregating into lists
-- Use count(), sum(), avg(), min(), max() for aggregations
-
-Provide ONLY the JSON response with no additional text, markdown formatting, or explanations outside the JSON structure.
+CORE RELATIONSHIPS:
+CONTAINS (file→declaration), HAS_MEMBER (class→method/property), HAS_PARAMETER (method→param), EXTENDS (child→parent), IMPLEMENTS (class→interface), IMPORTS (file→file), TYPED_AS (node→type), CALLS (caller→callee), DECORATED_WITH (node→decorator)
 `;
+
   constructor() {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -184,7 +68,7 @@ Provide ONLY the JSON response with no additional text, markdown formatting, or 
   }
 
   public async getOrCreateAssistant(schemaPath: string): Promise<string> {
-    // Store schema path for later use in prompt injection
+    // Store schema path for later use — schema is injected directly into each prompt
     this.schemaPath = schemaPath;
 
     if (process.env.OPENAI_ASSISTANT_ID) {
@@ -193,63 +77,29 @@ Provide ONLY the JSON response with no additional text, markdown formatting, or 
       return this.assistantId;
     }
 
-    const schemaFile = await this.openai.files.create({
-      file: fs.createReadStream(schemaPath),
-      purpose: 'assistants',
-    });
-
-    // Create a vector store for the schema file
-    const vectorStore = await this.openai.vectorStores.create({
-      name: 'Neo4j APOC Schema Vector Store',
-      file_ids: [schemaFile.id],
-      metadata: { type: 'neo4j_apoc_schema' },
-    });
-
-    const vectorStoreId = vectorStore.id;
-
-    // Create a new assistant
-    const assistantConfig: OpenAI.Beta.AssistantCreateParams = {
-      name: 'Neo4j Cypher Query Agent',
-      description: 'An agent that helps convert natural language to Neo4j Cypher queries',
+    const assistant = await this.openai.beta.assistants.create({
+      name: 'Neo4j Cypher Query Generator',
+      description: 'Converts natural language to Neo4j Cypher queries. Returns JSON only.',
       model: this.MODEL,
-      instructions: `
-      You are a specialized assistant that helps convert natural language requests into Neo4j Cypher queries.
-      When users ask questions about their codebase data, you'll analyze their intent and generate appropriate
-      Cypher queries based on the Neo4j schema provided in files.
-  ${this.messageInstructions}
-`,
-      tools: [
-        {
-          type: 'code_interpreter',
-        },
-        {
-          type: 'file_search',
-        },
-      ],
-      tool_resources: {
-        code_interpreter: {
-          file_ids: [schemaFile.id],
-        },
+      instructions: this.assistantInstructions,
+      response_format: { type: 'json_object' },
+      // No tools — schema is injected directly into each message
+      tools: [],
+    });
 
-        file_search: {
-          vector_store_ids: [vectorStoreId],
-        },
-      },
-    };
-
-    const assistant = await this.openai.beta.assistants.create(assistantConfig);
     this.assistantId = assistant.id;
+    console.error(`Created assistant with ID: ${this.assistantId}`);
 
     return this.assistantId;
   }
 
   /**
-   * Load and format the schema context for direct injection into prompts.
-   * This supplements the file_search tool by providing explicit schema information.
+   * Load the schema and format it for direct injection into the user message.
+   * This is the ONLY way the LLM sees the schema — no file_search.
    */
   private loadSchemaContext(): string {
     if (!this.schemaPath) {
-      return 'No schema available. Use node types from file_search.';
+      return 'No schema available.';
     }
 
     try {
@@ -260,61 +110,49 @@ Provide ONLY the JSON response with no additional text, markdown formatting, or 
         return 'No schema available.';
       }
 
-      // Format node types
-      const nodeTypes = schema.nodeTypes?.map((n: any) => n.label).join(', ') ?? 'none';
+      // Format node types with properties
+      const nodeTypeLines = schema.nodeTypes
+        ?.map((n: any) => `  ${n.label} (${n.count} nodes) — properties: ${(n.properties ?? []).join(', ')}`)
+        .join('\n') ?? 'none';
 
-      // Get function count vs class count to hint at framework
-      const functionCount = schema.nodeTypes?.find((n: any) => n.label === 'Function')?.count ?? 0;
-      const classCount = schema.nodeTypes?.find((n: any) => n.label === 'Class')?.count ?? 0;
-      const decoratorCount = schema.nodeTypes?.find((n: any) => n.label === 'Decorator')?.count ?? 0;
+      // Format relationship types with connection patterns
+      const relTypeLines = schema.relationshipTypes
+        ?.map((r: any) => {
+          const conns = (r.connections ?? []).map((c: any) => `${c.from}→${c.to}`).join(', ');
+          return `  ${r.type} (${r.count}) — ${conns}`;
+        })
+        .join('\n') ?? 'none';
 
-      // Format relationship types
-      const relTypes = schema.relationshipTypes?.map((r: any) => r.type).join(', ') ?? 'none';
-
-      // Format semantic types and categorize them
+      // Format semantic types
       const semanticTypeList: string[] = schema.semanticTypes?.map((s: any) => s.type) ?? [];
-      const semTypes = semanticTypeList.length > 0 ? semanticTypeList.join(', ') : 'none';
+      const semTypeLines = schema.semanticTypes
+        ?.map((s: any) => `  ${s.type} (on ${s.label}, ${s.count} nodes)`)
+        .join('\n') ?? 'none';
+
+      // Format common patterns
+      const patternLines = schema.commonPatterns
+        ?.map((p: any) => `  (${p.from})-[:${p.relationship}]->(${p.to}) × ${p.count}`)
+        .join('\n') ?? 'none';
 
       // Cache categorized semantic types for dynamic example generation
       this.cachedSemanticTypes = this.categorizeSemanticTypes(semanticTypeList);
 
-      // Framework hint based on graph composition
-      let frameworkHint = '';
-      if (decoratorCount > 10 && classCount > functionCount) {
-        // Use discovered semantic types instead of assuming NestJS
-        const sampleType =
-          this.cachedSemanticTypes?.controller[0] ?? this.cachedSemanticTypes?.service[0] ?? 'YourSemanticType';
-        frameworkHint = `\nFRAMEWORK DETECTED: Decorator-based codebase. Use Class nodes with semanticType property (e.g., semanticType = "${sampleType}").`;
-      } else if (functionCount > classCount) {
-        frameworkHint = '\nFRAMEWORK DETECTED: React/functional codebase. Use Function nodes for components.';
-      }
+      return `SCHEMA:
 
-      return `
-=== VALID NODE LABELS (use ONLY these after the colon) ===
-${nodeTypes}
+NODE LABELS (use ONLY these):
+${nodeTypeLines}
 
-=== VALID RELATIONSHIP TYPES ===
-${relTypes}
+RELATIONSHIP TYPES:
+${relTypeLines}
 
-=== SEMANTIC TYPES - USE THESE FOR FRAMEWORK QUERIES ===
-Available semantic types in this project: ${semTypes}
+SEMANTIC TYPES (query via WHERE n.semanticType = 'value'):
+${semTypeLines}
 
-*** SEMANTIC TYPES ARE THE PRIMARY WAY TO QUERY FRAMEWORK-SPECIFIC NODES ***
-Query pattern: WHERE n.semanticType = 'TypeFromListAbove'
-Example: MATCH (n:Class) WHERE n.projectId = $projectId AND n.semanticType = '${semanticTypeList[0] ?? 'SemanticType'}' RETURN n
-${frameworkHint}
-
-=== CRITICAL RULES ===
-1. Use ONLY the labels listed above after the colon (:Label)
-2. Semantic types are PROPERTY values, NOT labels - use WHERE n.semanticType = 'Type'
-3. Class/entity names are PROPERTY values, NOT labels - use WHERE n.name = 'Name'
-4. WRONG: (n:ClassName) - using names as labels
-5. CORRECT: (n:Class {name: 'ClassName'}) or (n:LabelFromSchema {name: 'Name'})
-6. CORRECT: (n:Class) WHERE n.semanticType = 'TypeFromSemanticTypesList'
-`.trim();
+COMMON PATTERNS:
+${patternLines}`;
     } catch (error) {
       console.warn('Failed to load schema for prompt injection:', error);
-      return 'Schema load failed. Use file_search for schema information.';
+      return 'Schema load failed.';
     }
   }
 
@@ -424,15 +262,15 @@ FALLBACK PATTERNS (use when semantic types don't exist):
     // Generate dynamic examples based on discovered semantic types
     const dynamicSemanticExamples = this.cachedSemanticTypes
       ? this.generateDynamicSemanticExamples(this.cachedSemanticTypes)
-      : '\nNo semantic types discovered. Use name patterns for all queries (e.g., c.name CONTAINS "Controller").\n';
+      : '';
 
-    const prompt = `Please convert this request to a valid Neo4j Cypher query: ${userPrompt}.
+    const prompt = `Convert to Cypher: ${userPrompt}
 
 ${schemaContext}
 ${dynamicSemanticExamples}
-The query will be scoped to project: ${projectId}
-Remember to include WHERE n.projectId = $projectId for all node patterns.
-`;
+Project: ${projectId} — add WHERE n.projectId = $projectId on every node pattern.
+
+Respond with ONLY a JSON object: {"cypher": "...", "parameters": null, "explanation": "..."}`;
 
     // SECURITY: Only log prompt length, not full content which may contain sensitive data
     console.error(`NL-to-Cypher: Processing prompt (${prompt.length} chars) for project ${projectId}`);
@@ -500,10 +338,10 @@ Remember to include WHERE n.projectId = $projectId for all node patterns.
     // SECURITY: Don't log the full text value which may contain sensitive queries
     console.error(`NL-to-Cypher: Parsing response (${textValue.length} chars)`);
 
-    // Parse the response with proper error handling
+    // Extract JSON from the LLM response, handling markdown fences and prose preamble
     let result: { cypher: string; parameters?: Record<string, unknown>; explanation?: string };
     try {
-      result = JSON.parse(textValue);
+      result = JSON.parse(this.extractJson(textValue));
     } catch (parseError) {
       const message = parseError instanceof Error ? parseError.message : String(parseError);
       throw new Error(
@@ -519,6 +357,41 @@ Remember to include WHERE n.projectId = $projectId for all node patterns.
     this.validateLabelUsage(result.cypher);
 
     return result;
+  }
+
+  /**
+   * Extracts JSON from an LLM response that may contain markdown fences or prose preamble.
+   * Tries in order: raw parse, markdown fence extraction, first `{...}` block extraction.
+   */
+  private extractJson(text: string): string {
+    const trimmed = text.trim();
+
+    // 1. Already valid JSON — return as-is
+    if (trimmed.startsWith('{')) {
+      return trimmed;
+    }
+
+    // 2. Wrapped in markdown code fences: ```json ... ``` or ``` ... ```
+    const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+    if (fenceMatch) {
+      return fenceMatch[1].trim();
+    }
+
+    // 3. JSON object embedded in prose — find the first top-level { ... }
+    const startIdx = trimmed.indexOf('{');
+    if (startIdx !== -1) {
+      let depth = 0;
+      for (let i = startIdx; i < trimmed.length; i++) {
+        if (trimmed[i] === '{') depth++;
+        else if (trimmed[i] === '}') depth--;
+        if (depth === 0) {
+          return trimmed.substring(startIdx, i + 1);
+        }
+      }
+    }
+
+    // 4. Give up — return original text so JSON.parse produces a useful error
+    return trimmed;
   }
 
   /**
