@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - MCP Tool Improvements - 2026-03-17
+
+### Breaking Changes
+
+- **Session tools consolidated (5→3):** `save_session_bookmark`, `restore_session_bookmark`, `save_session_note`, `recall_session_notes` replaced by `session_save` and `session_recall`. `cleanup_session` unchanged.
+- **swarm_claim_task split into 3 tools:** Release/abandon actions moved to `swarm_release_task`. Start/force_start moved to `swarm_advance_task`. The `action` parameter replaced by `startImmediately` boolean.
+- **traverse_from_node display params nested:** `includeCode`, `snippetLength`, `summaryOnly`, `maxNodesPerChain`, `maxTotalNodes`, `limit` moved into optional `displayOptions` object. Top-level params reduced from 13 to 8.
+
+### Added
+
+- **`session_save`**: Unified tool — auto-detects bookmark vs note based on input. Provide `workingSetNodeIds` for bookmark, `topic`+`content` for note, or both.
+- **`session_recall`**: Unified tool — provide `sessionId` for bookmark restore, `query` for semantic note search, or both.
+- **`swarm_release_task`**: Release or abandon a claimed task with optional abandonment tracking.
+- **`swarm_advance_task`**: Start or force-start a claimed task.
+- **`autoResolveProjectId`**: `detect_dead_code` and `detect_duplicate_code` now auto-resolve `projectId` when only one project exists. Parameter is optional.
+- **`createEmptyResponse`** helper: Standardized `{ status: 'empty', message, suggestion }` shape for all "no results" responses.
+
+### Changed
+
+- **Tool descriptions restructured**: All 27+ tool descriptions now lead with category and usage hint (e.g., "Primary tool for...", "Swarm orchestration tool.", "Diagnostic tool.").
+- **Parameter descriptions trimmed**: Removed restated defaults, types, enum values, and implementation details across all tool files. ~290 lines removed.
+- **detect_dead_code / detect_duplicate_code**: Summary stats always included in response regardless of `summaryOnly` flag.
+- **Error responses standardized**: Fixed `success: false` inside success response (session-bookmark) and plain-text empty results across 7 tool files.
+
+### Fixed
+
+- **`useWeightedTraversal` doc bug**: Description said default `false`, schema had `.default(true)`.
+- **`chunkSize` doc bug**: Description said default `50`, schema had `.default(100)`.
+
 ## [2.3.0] - Swarm Coordination - 2025-01-XX
 
 ### Added

@@ -167,7 +167,7 @@ Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_ta
   },
   [TOOL_NAMES.saveSessionBookmark]: {
     title: 'Save Session Bookmark',
-    description: `Session persistence tool. Save current working set, task context, findings, and next steps as a bookmark for cross-session continuity. Use restore_session_bookmark to resume.`,
+    description: `Session persistence tool. Save current working set, task context, findings, and next steps as a bookmark for cross-session continuity. Use session_recall to resume.`,
   },
   [TOOL_NAMES.restoreSessionBookmark]: {
     title: 'Restore Session Bookmark',
@@ -175,7 +175,7 @@ Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_ta
   },
   [TOOL_NAMES.saveSessionNote]: {
     title: 'Save Session Note',
-    description: `Session persistence tool. Save an observation, decision, or risk as a durable note linked to code nodes. Notes survive session compaction and are searchable via recall_session_notes.`,
+    description: `Session persistence tool. Save an observation, decision, or risk as a durable note linked to code nodes. Notes survive session compaction and are searchable via session_recall.`,
   },
   [TOOL_NAMES.recallSessionNotes]: {
     title: 'Recall Session Notes',

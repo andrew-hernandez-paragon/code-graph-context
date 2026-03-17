@@ -116,6 +116,7 @@ swarm_claim_task({
   agentId: "{AGENT_ID}"
 })
 // Returns highest-priority available task, or "no_tasks" if done
+// startImmediately=true by default — task moves to in_progress immediately
 
 ### Step 2: Get the node ID for the file
 traverse_from_node({
@@ -143,13 +144,9 @@ swarm_pheromone({
 })
 
 ### Step 5: Start working
-swarm_claim_task({
-  projectId: "{PROJECT_ID}",
-  swarmId: "{SWARM_ID}",
-  agentId: "{AGENT_ID}",
-  taskId: "<TASK_ID>",
-  action: "start"
-})
+// Task already started (startImmediately=true is the default in swarm_claim_task)
+// If you claimed with startImmediately=false, use:
+// swarm_advance_task({ projectId: "{PROJECT_ID}", taskId: "<TASK_ID>", agentId: "{AGENT_ID}" })
 
 swarm_pheromone({
   projectId: "{PROJECT_ID}",
@@ -375,16 +372,27 @@ After cleanup, summarize:
 
 ## Tool Reference
 
-### Orchestration
-| Tool | Purpose |
-|------|---------|
 ### Task Queue
 | Tool | Purpose |
 |------|---------|
 | `swarm_post_task` | Add task to queue |
-| `swarm_claim_task` | Claim/start/release task |
+| `swarm_claim_task` | Claim task (startImmediately=true by default) |
+| `swarm_release_task` | Release or abandon a claimed task |
+| `swarm_advance_task` | Start or force-start a claimed task |
 | `swarm_complete_task` | Complete/fail/review task |
 | `swarm_get_tasks` | Query tasks, get stats |
+
+### Messaging
+| Tool | Purpose |
+|------|---------|
+| `swarm_message` | Direct agent-to-agent messaging |
+
+### Session
+| Tool | Purpose |
+|------|---------|
+| `session_save` | Save bookmark or note |
+| `session_recall` | Restore bookmark or search notes |
+| `cleanup_session` | Remove expired notes and old bookmarks |
 
 ### Pheromones
 | Tool | Purpose |

@@ -92,12 +92,33 @@ If upgrading from a version without multi-project support, note these breaking c
 
 | Tool | Purpose |
 |------|---------|
-| `search_codebase` | Semantic search via vector embeddings - start here |
-| `traverse_from_node` | Explore relationships from a node ID |
-| `impact_analysis` | Analyze dependencies (LOW/MEDIUM/HIGH/CRITICAL risk) |
+| `search_codebase` | Primary tool — semantic search via vector embeddings |
+| `traverse_from_node` | Follow-up exploration from a node ID |
+| `impact_analysis` | Risk assessment — analyze dependencies before changes |
 | `parse_typescript_project` | Build the graph from source code |
-| `natural_language_to_cypher` | Convert NL to Cypher queries |
-| `test_neo4j_connection` | Health check |
+| `check_parse_status` | Poll async parsing job status |
+| `natural_language_to_cypher` | Advanced — convert NL to Cypher queries (requires OpenAI) |
+| `detect_dead_code` | Find unused exports, uncalled methods |
+| `detect_duplicate_code` | Find structural and semantic duplicates |
+| `list_projects` | List parsed projects |
+| `test_neo4j_connection` | Diagnostic — verify Neo4j connectivity |
+| `swarm_claim_task` | Claim a task from the queue |
+| `swarm_release_task` | Release or abandon a claimed task |
+| `swarm_advance_task` | Start or force-start a claimed task |
+| `swarm_complete_task` | Mark task completed/failed |
+| `swarm_post_task` | Post task to queue |
+| `swarm_get_tasks` | Query tasks with filters |
+| `swarm_pheromone` | Mark code nodes for coordination |
+| `swarm_sense` | Query active pheromones |
+| `swarm_cleanup` | Bulk delete pheromones/tasks |
+| `swarm_message` | Direct agent-to-agent messaging |
+| `session_save` | Save bookmark or note (unified) |
+| `session_recall` | Restore bookmark or search notes (unified) |
+| `cleanup_session` | Remove expired session data |
+| `start_watch_project` | Watch for file changes |
+| `stop_watch_project` | Stop watching |
+| `list_watchers` | List active watchers |
+| `hello` | Diagnostic — verify MCP server running |
 
 ### Response Format
 
@@ -117,6 +138,7 @@ All query tools support parameters to reduce response size for exploration:
 | `snippetLength: N` | search_codebase, traverse_from_node | Limit code snippets to N characters |
 | `maxTotalNodes: N` | traverse_from_node | Cap total unique nodes returned |
 | `maxNodesPerChain: N` | both | Limit relationship chains per depth |
+| `displayOptions` | traverse_from_node | Nested object — accepts `summaryOnly`, `snippetLength`, `includeCode`, `maxNodesPerChain` |
 
 **Recommended usage patterns:**
 ```typescript
@@ -124,13 +146,13 @@ All query tools support parameters to reduce response size for exploration:
 search_codebase({ projectId: "...", query: "...", includeCode: false })
 
 // Quick summary - file paths and statistics only
-traverse_from_node({ projectId: "...", nodeId: "...", summaryOnly: true })
+traverse_from_node({ projectId: "...", nodeId: "...", displayOptions: { summaryOnly: true } })
 
 // Detailed with smaller snippets
-traverse_from_node({ projectId: "...", nodeId: "...", snippetLength: 200 })
+traverse_from_node({ projectId: "...", nodeId: "...", displayOptions: { snippetLength: 200 } })
 
 // Minimal output for large graphs
-traverse_from_node({ projectId: "...", nodeId: "...", includeCode: false, maxNodesPerChain: 3 })
+traverse_from_node({ projectId: "...", nodeId: "...", displayOptions: { includeCode: false, maxNodesPerChain: 3 } })
 ```
 
 ## Dependencies
