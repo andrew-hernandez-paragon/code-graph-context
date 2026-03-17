@@ -19,7 +19,7 @@ import {
 } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, debugLog, resolveProjectIdOrError } from '../utils.js';
+import { autoResolveProjectId, createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
 // Result type for semantic types query
 interface SemanticTypeResult {
@@ -151,7 +151,7 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
       title: TOOL_METADATA[TOOL_NAMES.detectDeadCode].title,
       description: TOOL_METADATA[TOOL_NAMES.detectDeadCode].description,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().optional().describe('Project ID, name, or path (auto-resolves if only one project exists)'),
         excludePatterns: z
           .array(z.string())
           .optional()
@@ -208,7 +208,7 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
       },
     },
     async ({
-      projectId,
+      projectId = undefined,
       excludePatterns = [],
       excludeSemanticTypes = [],
       includeEntryPoints = true,
@@ -223,7 +223,7 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID
-        const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+        const projectResult = await autoResolveProjectId(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
         const resolvedProjectId = projectResult.projectId;
 
@@ -429,37 +429,33 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
           .slice(0, 20)
           .map(([file, count]) => ({ file, count }));
 
+        // Always-included summary stats
+        const summaryStats = {
+          summary,
+          riskLevel,
+          totalCount: filteredItems.length,
+          totalBeforeFilter: deadCodeItems.length,
+          byConfidence,
+          byCategory,
+          byType,
+          affectedFiles,
+          topFilesByDeadCode,
+          excludedEntryPointsCount,
+        };
+
         // Build result based on summaryOnly flag
         let result: Record<string, unknown>;
 
         if (summaryOnly) {
-          // Summary mode: statistics only, no full arrays
-          result = {
-            summary,
-            riskLevel,
-            totalCount: filteredItems.length,
-            totalBeforeFilter: deadCodeItems.length,
-            byConfidence,
-            byCategory,
-            byType,
-            affectedFiles,
-            topFilesByDeadCode,
-            excludedEntryPointsCount,
-          };
+          // Summary mode: statistics only, no item list
+          result = summaryStats;
         } else {
-          // Paginated mode: apply limit/offset
+          // Paginated mode: apply limit/offset, include both stats and items
           const paginatedItems = filteredItems.slice(offset, offset + limit);
           const hasMore = offset + limit < filteredItems.length;
 
           result = {
-            summary,
-            riskLevel,
-            totalCount: filteredItems.length,
-            totalBeforeFilter: deadCodeItems.length,
-            byConfidence,
-            byCategory,
-            byType,
-            topFilesByDeadCode,
+            ...summaryStats,
             deadCode: paginatedItems,
             pagination: {
               offset,
@@ -467,10 +463,8 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
               returned: paginatedItems.length,
               hasMore,
             },
-            excludedEntryPointsCount,
             // Only include full entry points array on first page
             ...(offset === 0 && includeEntryPoints ? { excludedEntryPoints } : {}),
-            affectedFiles,
           };
         }
 
