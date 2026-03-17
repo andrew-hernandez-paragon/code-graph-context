@@ -17,7 +17,7 @@ import {
 } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createEmptyResponse, createErrorResponse, createSuccessResponse, debugLog, resolveProjectIdOrError } from '../utils.js';
+import { autoResolveProjectId, createEmptyResponse, createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
 // Types
 type Scope = 'methods' | 'functions' | 'classes' | 'all';
@@ -148,7 +148,7 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
       title: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].title,
       description: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].description,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().optional().describe('Project ID, name, or path (auto-resolves if only one project exists)'),
         type: z
           .enum(['structural', 'semantic', 'all'])
           .optional()
@@ -215,7 +215,7 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID
-        const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+        const projectResult = await autoResolveProjectId(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
         const resolvedProjectId = projectResult.projectId;
 
@@ -470,41 +470,44 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
           summary += ' (Warning: No embeddings for semantic detection)';
         }
 
+        // Build summary stats (always included)
+        const fileDuplicateCounts: Record<string, number> = {};
+        for (const group of duplicateGroups) {
+          for (const item of group.items) {
+            const shortPath = getShortPath(item.filePath);
+            fileDuplicateCounts[shortPath] = (fileDuplicateCounts[shortPath] ?? 0) + 1;
+          }
+        }
+        const topFilesByDuplicates = Object.entries(fileDuplicateCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([file, count]) => ({ file, count }));
+
+        const stats = {
+          totalGroups,
+          totalDuplicates,
+          byType,
+          affectedFiles,
+          topFilesByDuplicates,
+        };
+
         // Build result based on summaryOnly flag
         let result: Record<string, unknown>;
 
         if (summaryOnly) {
-          // Summary mode: statistics only, no full arrays
-          const fileDuplicateCounts: Record<string, number> = {};
-          for (const group of duplicateGroups) {
-            for (const item of group.items) {
-              const shortPath = getShortPath(item.filePath);
-              fileDuplicateCounts[shortPath] = (fileDuplicateCounts[shortPath] ?? 0) + 1;
-            }
-          }
-          const topFilesByDuplicates = Object.entries(fileDuplicateCounts)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 20)
-            .map(([file, count]) => ({ file, count }));
-
+          // Summary mode: statistics only, no groups list
           result = {
             summary,
-            totalGroups,
-            totalDuplicates,
-            byType,
-            affectedFiles,
-            topFilesByDuplicates,
+            ...stats,
           };
         } else {
-          // Paginated mode: apply offset/maxResults
+          // Paginated mode: apply offset/maxResults, include stats AND groups
           const paginatedGroups = duplicateGroups.slice(offset, offset + maxResults);
           const hasMore = offset + maxResults < duplicateGroups.length;
 
           result = {
             summary,
-            totalGroups,
-            totalDuplicates,
-            byType,
+            ...stats,
             duplicates: paginatedGroups,
             pagination: {
               offset,
@@ -512,7 +515,6 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
               returned: paginatedGroups.length,
               hasMore,
             },
-            affectedFiles,
           };
         }
 
