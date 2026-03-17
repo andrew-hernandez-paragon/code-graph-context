@@ -124,29 +124,29 @@ export const createSwarmPostTaskTool = (server: McpServer): void => {
           .enum(TASK_TYPES)
           .optional()
           .default('implement')
-          .describe('Task type: implement, refactor, fix, test, review, document, investigate, plan'),
+          .describe('Task type'),
         priority: z
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()
           .default('normal')
-          .describe('Priority level: critical, high, normal, low, backlog'),
+          .describe('Task priority'),
         targetNodeIds: z
           .array(z.string())
           .optional()
           .default([])
-          .describe('Code node IDs this task targets (from search_codebase)'),
+          .describe('Code node IDs this task targets'),
         targetFilePaths: z
           .array(z.string())
           .optional()
           .default([])
-          .describe('File paths this task affects (alternative to nodeIds)'),
+          .describe('File paths this task affects'),
         dependencies: z
           .array(z.string())
           .optional()
           .default([])
-          .describe('Task IDs that must be completed before this task can start'),
-        createdBy: z.string().describe('Agent ID or identifier of who created this task'),
-        metadata: z.record(z.unknown()).optional().describe('Additional metadata (context, acceptance criteria, etc.)'),
+          .describe('Task IDs that must complete before this task starts'),
+        createdBy: z.string().describe('Agent ID creating this task'),
+        metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
       },
     },
     async ({

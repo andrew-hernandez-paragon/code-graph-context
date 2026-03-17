@@ -115,17 +115,17 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
         projectId: z.string().describe('Project ID, name, or path'),
         swarmId: z.string().optional().describe('Delete all pheromones and tasks from this swarm'),
         agentId: z.string().optional().describe('Delete all pheromones from this agent'),
-        all: z.boolean().optional().default(false).describe('Delete ALL pheromones in project (use with caution)'),
+        all: z.boolean().optional().default(false).describe('Delete ALL pheromones in project'),
         includeTasks: z
           .boolean()
           .optional()
           .default(true)
-          .describe('Also delete SwarmTask nodes (default: true, only applies when swarmId is provided)'),
+          .describe('Also delete SwarmTask nodes (only applies when swarmId is provided)'),
         keepTypes: z
           .array(z.string())
           .optional()
           .default(['warning'])
-          .describe('Pheromone types to preserve (default: ["warning"])'),
+          .describe('Pheromone types to preserve'),
         dryRun: z.boolean().optional().default(false).describe('Preview what would be deleted without deleting'),
       },
     },

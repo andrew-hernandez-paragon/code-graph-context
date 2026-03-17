@@ -268,29 +268,29 @@ export const createSwarmCompleteTaskTool = (server: McpServer): void => {
       inputSchema: {
         projectId: z.string().describe('Project ID, name, or path'),
         taskId: z.string().describe('Task ID to complete'),
-        agentId: z.string().describe('Your agent ID (must match the agent who claimed the task)'),
+        agentId: z.string().describe('Your agent ID (must match who claimed the task)'),
         action: z
           .enum(['complete', 'fail', 'request_review', 'approve', 'reject', 'retry'])
           .describe('Action to take on the task'),
-        summary: z.string().optional().describe('Summary of what was done (required for complete/request_review)'),
+        summary: z.string().optional().describe('What was done (required for complete/request_review)'),
         artifacts: z
           .record(z.unknown())
           .optional()
-          .describe('Artifacts produced: { files: [], commits: [], pullRequests: [], notes: string }'),
-        filesChanged: z.array(z.string()).optional().describe('List of files that were modified'),
-        linesAdded: z.number().int().optional().describe('Number of lines added'),
-        linesRemoved: z.number().int().optional().describe('Number of lines removed'),
-        reason: z.string().optional().describe('Reason for failure (required if action=fail)'),
-        errorDetails: z.string().optional().describe('Technical error details for debugging'),
-        retryable: z.boolean().optional().default(true).describe('Whether the task can be retried after failure'),
-        reviewNotes: z.string().optional().describe('Notes for the reviewer (for request_review)'),
-        reviewerId: z.string().optional().describe('ID of the reviewer (required for approve/reject)'),
-        notes: z.string().optional().describe('Approval/rejection notes'),
+          .describe('Artifacts produced by this task'),
+        filesChanged: z.array(z.string()).optional().describe('Files modified'),
+        linesAdded: z.number().int().optional().describe('Lines added'),
+        linesRemoved: z.number().int().optional().describe('Lines removed'),
+        reason: z.string().optional().describe('Failure reason (required for action=fail)'),
+        errorDetails: z.string().optional().describe('Technical error details'),
+        retryable: z.boolean().optional().default(true).describe('Allow retry after failure'),
+        reviewNotes: z.string().optional().describe('Notes for the reviewer'),
+        reviewerId: z.string().optional().describe('Reviewer ID (required for approve/reject)'),
+        notes: z.string().optional().describe('Approval or rejection notes'),
         markAsFailed: z
           .boolean()
           .optional()
           .default(false)
-          .describe('If rejecting, mark as failed instead of returning to in_progress'),
+          .describe('On reject, mark as failed instead of returning to in_progress'),
       },
     },
     async ({

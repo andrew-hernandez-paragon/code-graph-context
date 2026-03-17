@@ -6,6 +6,10 @@
  * - Atomic claim_and_start action (eliminates race window)
  * - Retry logic on race loss
  * - Recovery actions (abandon, force_start)
+ *
+ * Phase 2 refactor:
+ * - Handlers extracted to src/mcp/handlers/swarm/
+ * - Shared queries centralized in queries.ts
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -15,238 +19,14 @@ import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 
-import { TASK_TYPES, TASK_PRIORITIES, TaskPriority } from './swarm-constants.js';
+import { TASK_TYPES, TASK_PRIORITIES } from './swarm-constants.js';
 import { PENDING_MESSAGES_FOR_AGENT_QUERY, AUTO_ACKNOWLEDGE_QUERY } from './swarm-message.tool.js';
-
-/** Maximum retries when racing for a task */
-const MAX_CLAIM_RETRIES = 3;
-/** Delay between retries (ms) */
-const RETRY_DELAY_BASE_MS = 50;
-
-/**
- * Query to claim a specific task by ID
- * Uses atomic update to prevent race conditions
- */
-const CLAIM_TASK_BY_ID_QUERY = `
-  MATCH (t:SwarmTask {id: $taskId, projectId: $projectId})
-  WHERE t.status IN ['available', 'blocked']
-
-  // Check if dependencies are complete
-  OPTIONAL MATCH (t)-[:DEPENDS_ON]->(dep:SwarmTask)
-  WHERE dep.status <> 'completed'
-  WITH t, count(dep) as incompleteDeps
-
-  // Only claim if all dependencies are complete
-  WHERE incompleteDeps = 0
-
-  // Acquire exclusive lock to prevent race conditions
-  CALL apoc.lock.nodes([t])
-
-  // Double-check status after acquiring lock
-  WITH t WHERE t.status IN ['available', 'blocked']
-
-  // Atomic claim
-  SET t.status = $targetStatus,
-      t.claimedBy = $agentId,
-      t.claimedAt = timestamp(),
-      t.startedAt = CASE WHEN $targetStatus = 'in_progress' THEN timestamp() ELSE null END,
-      t.updatedAt = timestamp()
-
-  // Return task details with target info
-  WITH t
-  OPTIONAL MATCH (t)-[:TARGETS]->(target)
-  RETURN t.id as id,
-         t.projectId as projectId,
-         t.swarmId as swarmId,
-         t.title as title,
-         t.description as description,
-         t.type as type,
-         t.priority as priority,
-         t.priorityScore as priorityScore,
-         t.status as status,
-         t.targetNodeIds as targetNodeIds,
-         t.targetFilePaths as targetFilePaths,
-         t.dependencies as dependencies,
-         t.claimedBy as claimedBy,
-         t.claimedAt as claimedAt,
-         t.startedAt as startedAt,
-         t.createdBy as createdBy,
-         t.metadata as metadata,
-         collect(DISTINCT {
-           id: target.id,
-           type: labels(target)[0],
-           name: target.name,
-           filePath: target.filePath
-         }) as targets
-`;
-
-/**
- * Query to claim the highest priority available task matching criteria
- * Uses APOC locking to prevent race conditions between parallel workers
- * Supports both 'claimed' and 'in_progress' target states for atomic claim_and_start
- */
-const CLAIM_NEXT_TASK_QUERY = `
-  // Find available or blocked tasks (blocked tasks may have deps completed now)
-  MATCH (t:SwarmTask {projectId: $projectId, swarmId: $swarmId})
-  WHERE t.status IN ['available', 'blocked']
-    AND ($types IS NULL OR size($types) = 0 OR t.type IN $types)
-    AND ($minPriority IS NULL OR t.priorityScore >= $minPriority)
-
-  // Exclude tasks with incomplete dependencies
-  OPTIONAL MATCH (t)-[:DEPENDS_ON]->(dep:SwarmTask)
-  WHERE dep.status <> 'completed'
-  WITH t, count(dep) as incompleteDeps
-  WHERE incompleteDeps = 0
-
-  // Re-establish context for ordering (required by Cypher syntax)
-  WITH t
-  ORDER BY t.priorityScore DESC, t.createdAt ASC
-  LIMIT 1
-
-  // Acquire exclusive lock to prevent race conditions
-  CALL apoc.lock.nodes([t])
-
-  // Double-check status after acquiring lock (another worker may have claimed it)
-  WITH t WHERE t.status IN ['available', 'blocked']
-
-  // Atomic claim - supports both claim and claim_and_start via $targetStatus
-  SET t.status = $targetStatus,
-      t.claimedBy = $agentId,
-      t.claimedAt = timestamp(),
-      t.startedAt = CASE WHEN $targetStatus = 'in_progress' THEN timestamp() ELSE null END,
-      t.updatedAt = timestamp()
-
-  // Return task details with target info
-  WITH t
-  OPTIONAL MATCH (t)-[:TARGETS]->(target)
-  RETURN t.id as id,
-         t.projectId as projectId,
-         t.swarmId as swarmId,
-         t.title as title,
-         t.description as description,
-         t.type as type,
-         t.priority as priority,
-         t.priorityScore as priorityScore,
-         t.status as status,
-         t.targetNodeIds as targetNodeIds,
-         t.targetFilePaths as targetFilePaths,
-         t.dependencies as dependencies,
-         t.claimedBy as claimedBy,
-         t.claimedAt as claimedAt,
-         t.startedAt as startedAt,
-         t.createdBy as createdBy,
-         t.metadata as metadata,
-         collect(DISTINCT {
-           id: target.id,
-           type: labels(target)[0],
-           name: target.name,
-           filePath: target.filePath
-         }) as targets
-`;
-
-/**
- * Query to start working on a claimed task (transition to in_progress)
- */
-const START_TASK_QUERY = `
-  MATCH (t:SwarmTask {id: $taskId, projectId: $projectId})
-  WHERE t.status = 'claimed' AND t.claimedBy = $agentId
-
-  SET t.status = 'in_progress',
-      t.startedAt = timestamp(),
-      t.updatedAt = timestamp()
-
-  RETURN t.id as id,
-         t.status as status,
-         t.claimedBy as claimedBy,
-         t.startedAt as startedAt
-`;
-
-/**
- * Query to release a claimed task (unclaim it)
- */
-const RELEASE_TASK_QUERY = `
-  MATCH (t:SwarmTask {id: $taskId, projectId: $projectId})
-  WHERE t.status IN ['claimed', 'in_progress'] AND t.claimedBy = $agentId
-
-  SET t.status = 'available',
-      t.claimedBy = null,
-      t.claimedAt = null,
-      t.startedAt = null,
-      t.updatedAt = timestamp(),
-      t.releaseReason = $reason
-
-  RETURN t.id as id,
-         t.title as title,
-         t.status as status
-`;
-
-/**
- * Query to abandon a task - releases it with tracking for debugging
- * More explicit than release, tracks abandon history
- */
-const ABANDON_TASK_QUERY = `
-  MATCH (t:SwarmTask {id: $taskId, projectId: $projectId})
-  WHERE t.claimedBy = $agentId
-    AND t.status IN ['claimed', 'in_progress']
-
-  // Track abandon history
-  SET t.status = 'available',
-      t.previousClaimedBy = t.claimedBy,
-      t.claimedBy = null,
-      t.claimedAt = null,
-      t.startedAt = null,
-      t.updatedAt = timestamp(),
-      t.abandonedBy = $agentId,
-      t.abandonedAt = timestamp(),
-      t.abandonReason = $reason,
-      t.abandonCount = COALESCE(t.abandonCount, 0) + 1
-
-  RETURN t.id as id,
-         t.title as title,
-         t.status as status,
-         t.abandonCount as abandonCount,
-         t.abandonReason as abandonReason
-`;
-
-/**
- * Query to force-start a task that's stuck in claimed state
- * Allows recovery when the normal start action fails
- */
-const FORCE_START_QUERY = `
-  MATCH (t:SwarmTask {id: $taskId, projectId: $projectId})
-  WHERE t.claimedBy = $agentId
-    AND t.status IN ['claimed', 'available']
-
-  SET t.status = 'in_progress',
-      t.claimedBy = $agentId,
-      t.claimedAt = COALESCE(t.claimedAt, timestamp()),
-      t.startedAt = timestamp(),
-      t.updatedAt = timestamp(),
-      t.forceStarted = true,
-      t.forceStartReason = $reason
-
-  RETURN t.id as id,
-         t.title as title,
-         t.status as status,
-         t.claimedBy as claimedBy,
-         t.startedAt as startedAt,
-         t.forceStarted as forceStarted
-`;
-
-/**
- * Query to get current task state for better error messages
- */
-const GET_TASK_STATE_QUERY = `
-  MATCH (t:SwarmTask {id: $taskId, projectId: $projectId})
-  RETURN t.id as id,
-         t.title as title,
-         t.status as status,
-         t.claimedBy as claimedBy,
-         t.claimedAt as claimedAt,
-         t.startedAt as startedAt,
-         t.abandonCount as abandonCount,
-         t.previousClaimedBy as previousClaimedBy
-`;
+import {
+  SwarmClaimHandler,
+  SwarmReleaseHandler,
+  SwarmAbandonHandler,
+  SwarmAdvanceHandler,
+} from '../handlers/swarm/index.js';
 
 export const createSwarmClaimTaskTool = (server: McpServer): void => {
   server.registerTool(
@@ -265,21 +45,19 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
         types: z
           .array(z.enum(TASK_TYPES))
           .optional()
-          .describe('Filter by task types when auto-selecting (e.g., ["implement", "fix"])'),
+          .describe('Filter by task types'),
         minPriority: z
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()
-          .describe('Minimum priority level when auto-selecting'),
+          .describe('Minimum priority when auto-selecting'),
         action: z
           .enum(['claim', 'claim_and_start', 'start', 'release', 'abandon', 'force_start'])
           .optional()
           .default('claim_and_start')
           .describe(
-            'Action: claim_and_start (RECOMMENDED: atomic claim+start), claim (reserve only), ' +
-              'start (begin work on claimed task), release (give up task), ' +
-              'abandon (release with tracking), force_start (recover from stuck claimed state)',
+            'claim_and_start: atomic claim+start (recommended); release/abandon: give up task; force_start: recover stuck state',
           ),
-        releaseReason: z.string().optional().describe('Reason for releasing/abandoning the task'),
+        releaseReason: z.string().optional().describe('Reason for releasing or abandoning'),
       },
     },
     async ({ projectId, swarmId, agentId, taskId, types, minPriority, action = 'claim_and_start', releaseReason }) => {
@@ -300,29 +78,21 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
             return createErrorResponse('taskId is required for release action');
           }
 
-          const result = await neo4jService.run(RELEASE_TASK_QUERY, {
+          const { error, data } = await new SwarmReleaseHandler(neo4jService).release(
+            resolvedProjectId,
             taskId,
-            projectId: resolvedProjectId,
             agentId,
-            reason: releaseReason || 'No reason provided',
-          });
+            releaseReason,
+          );
 
-          if (result.length === 0) {
-            // Get current state for better error message
-            const stateResult = await neo4jService.run(GET_TASK_STATE_QUERY, {
-              taskId,
-              projectId: resolvedProjectId,
-            });
-            const currentState = stateResult[0];
+          if (error) {
             return createErrorResponse(
               `Cannot release task ${taskId}. ` +
-                (currentState
-                  ? `Current state: ${currentState.status}, claimedBy: ${currentState.claimedBy || 'none'}`
-                  : 'Task not found.'),
+                (data ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}` : 'Task not found.'),
             );
           }
 
-          return createSuccessResponse(JSON.stringify({ action: 'released', taskId: result[0].id }));
+          return createSuccessResponse(JSON.stringify({ action: 'released', taskId: data.id }));
         }
 
         // Handle abandon action (release with tracking)
@@ -331,30 +101,23 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
             return createErrorResponse('taskId is required for abandon action');
           }
 
-          const result = await neo4jService.run(ABANDON_TASK_QUERY, {
+          const { error, data } = await new SwarmAbandonHandler(neo4jService).abandon(
+            resolvedProjectId,
             taskId,
-            projectId: resolvedProjectId,
             agentId,
-            reason: releaseReason || 'No reason provided',
-          });
+            releaseReason,
+          );
 
-          if (result.length === 0) {
-            const stateResult = await neo4jService.run(GET_TASK_STATE_QUERY, {
-              taskId,
-              projectId: resolvedProjectId,
-            });
-            const currentState = stateResult[0];
+          if (error) {
             return createErrorResponse(
               `Cannot abandon task ${taskId}. ` +
-                (currentState
-                  ? `Current state: ${currentState.status}, claimedBy: ${currentState.claimedBy || 'none'}`
-                  : 'Task not found.'),
+                (data ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}` : 'Task not found.'),
             );
           }
 
-          const abandonCount =
-            typeof result[0].abandonCount === 'object' ? result[0].abandonCount.toNumber() : result[0].abandonCount;
-          return createSuccessResponse(JSON.stringify({ action: 'abandoned', taskId: result[0].id, abandonCount }));
+          return createSuccessResponse(
+            JSON.stringify({ action: 'abandoned', taskId: data.id, abandonCount: data.abandonCount }),
+          );
         }
 
         // Handle force_start action (recovery from stuck claimed state)
@@ -363,30 +126,25 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
             return createErrorResponse('taskId is required for force_start action');
           }
 
-          const result = await neo4jService.run(FORCE_START_QUERY, {
+          const { error, data } = await new SwarmAdvanceHandler(neo4jService).forceStart(
+            resolvedProjectId,
             taskId,
-            projectId: resolvedProjectId,
             agentId,
-            reason: releaseReason || 'Recovering from stuck state',
-          });
+            releaseReason,
+          );
 
-          if (result.length === 0) {
-            const stateResult = await neo4jService.run(GET_TASK_STATE_QUERY, {
-              taskId,
-              projectId: resolvedProjectId,
-            });
-            const currentState = stateResult[0];
+          if (error) {
             return createErrorResponse(
               `Cannot force_start task ${taskId}. ` +
-                (currentState
-                  ? `Current state: ${currentState.status}, claimedBy: ${currentState.claimedBy || 'none'}. ` +
+                (data
+                  ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}. ` +
                     `force_start requires status=claimed|available and you must be the claimant.`
                   : 'Task not found.'),
             );
           }
 
           return createSuccessResponse(
-            JSON.stringify({ action: 'force_started', taskId: result[0].id, status: 'in_progress' }),
+            JSON.stringify({ action: 'force_started', taskId: data.id, status: 'in_progress' }),
           );
         }
 
@@ -396,23 +154,17 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
             return createErrorResponse('taskId is required for start action');
           }
 
-          const result = await neo4jService.run(START_TASK_QUERY, {
+          const { error, data } = await new SwarmAdvanceHandler(neo4jService).start(
+            resolvedProjectId,
             taskId,
-            projectId: resolvedProjectId,
             agentId,
-          });
+          );
 
-          if (result.length === 0) {
-            // Get current state for better error message
-            const stateResult = await neo4jService.run(GET_TASK_STATE_QUERY, {
-              taskId,
-              projectId: resolvedProjectId,
-            });
-            const currentState = stateResult[0];
+          if (error) {
             return createErrorResponse(
               `Cannot start task ${taskId}. ` +
-                (currentState
-                  ? `Current state: ${currentState.status}, claimedBy: ${currentState.claimedBy || 'none'}. ` +
+                (data
+                  ? `Current state: ${data.status}, claimedBy: ${data.claimedBy || 'none'}. ` +
                     `Tip: Use action="force_start" to recover from stuck claimed state, ` +
                     `or action="abandon" to release the task.`
                   : 'Task not found.'),
@@ -420,72 +172,41 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
           }
 
           return createSuccessResponse(
-            JSON.stringify({ action: 'started', taskId: result[0].id, status: 'in_progress' }),
+            JSON.stringify({ action: 'started', taskId: data.id, status: 'in_progress' }),
           );
         }
 
         // Handle claim and claim_and_start actions
-        // Determine target status based on action
+        const claimHandler = new SwarmClaimHandler(neo4jService);
         const targetStatus = action === 'claim_and_start' ? 'in_progress' : 'claimed';
 
-        let result;
-        let retryCount = 0;
+        let claimResult;
 
         if (taskId) {
-          // Claim specific task
-          result = await neo4jService.run(CLAIM_TASK_BY_ID_QUERY, {
-            taskId,
-            projectId: resolvedProjectId,
-            agentId,
-            targetStatus,
-          });
+          claimResult = await claimHandler.claimById(resolvedProjectId, taskId, agentId, targetStatus);
 
-          if (result.length === 0) {
-            const stateResult = await neo4jService.run(GET_TASK_STATE_QUERY, {
-              taskId,
-              projectId: resolvedProjectId,
-            });
-            const currentState = stateResult[0];
+          if (claimResult.error) {
             return createErrorResponse(
               `Cannot claim task ${taskId}. ` +
-                (currentState
-                  ? `Current state: ${currentState.status}, claimedBy: ${currentState.claimedBy || 'none'}`
+                (claimResult.data
+                  ? `Current state: ${claimResult.data.status}, claimedBy: ${claimResult.data.claimedBy || 'none'}`
                   : 'Task not found or has incomplete dependencies.'),
             );
           }
         } else {
-          // Auto-select highest priority available task with retry logic
-          const minPriorityScore = minPriority ? TASK_PRIORITIES[minPriority as TaskPriority] : null;
+          claimResult = await claimHandler.claimNext(resolvedProjectId, swarmId, agentId, targetStatus, {
+            types: types || null,
+            minPriority: minPriority || null,
+          });
 
-          // Retry loop to handle race conditions
-          while (retryCount < MAX_CLAIM_RETRIES) {
-            result = await neo4jService.run(CLAIM_NEXT_TASK_QUERY, {
-              projectId: resolvedProjectId,
-              swarmId,
-              agentId,
-              types: types || null,
-              minPriority: minPriorityScore,
-              targetStatus,
-            });
-
-            if (result.length > 0) {
-              break; // Successfully claimed a task
-            }
-
-            retryCount++;
-            if (retryCount < MAX_CLAIM_RETRIES) {
-              // Wait before retry with exponential backoff
-              await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_BASE_MS * Math.pow(2, retryCount - 1)));
-            }
-          }
-
-          if (!result || result.length === 0) {
-            return createSuccessResponse(JSON.stringify({ action: 'no_tasks', retryAttempts: retryCount }));
+          if (!claimResult.data) {
+            return createSuccessResponse(
+              JSON.stringify({ action: 'no_tasks', retryAttempts: claimResult.retryAttempts }),
+            );
           }
         }
 
-        const task = result[0];
-
+        const task = claimResult.data;
         const actionLabel = action === 'claim_and_start' ? 'claimed_and_started' : 'claimed';
 
         // Extract valid targets (resolved via :TARGETS relationship)
@@ -550,7 +271,7 @@ export const createSwarmClaimTaskTool = (server: McpServer): void => {
               ...(task.dependencies?.length > 0 && { dependencies: task.dependencies }),
             },
             ...(pendingMessages.length > 0 && { messages: pendingMessages }),
-            ...(retryCount > 0 && { retryAttempts: retryCount }),
+            ...(claimResult.retryAttempts > 0 && { retryAttempts: claimResult.retryAttempts }),
           }),
         );
       } catch (error) {

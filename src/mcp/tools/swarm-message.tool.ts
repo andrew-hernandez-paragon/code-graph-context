@@ -178,30 +178,27 @@ export const createSwarmMessageTool = (server: McpServer): void => {
         agentId: z.string().describe('Your unique agent identifier'),
         action: z
           .enum(['send', 'read', 'acknowledge'])
-          .describe('Action: send (post message), read (get messages), acknowledge (mark as read)'),
+          .describe('send: post message; read: get messages; acknowledge: mark as read'),
 
         // Send parameters
-        toAgentId: z.string().optional().describe('Target agent ID. Omit for broadcast to all swarm agents.'),
+        toAgentId: z.string().optional().describe('Target agent ID (omit for broadcast)'),
         category: z
           .enum(MESSAGE_CATEGORY_KEYS)
           .optional()
-          .describe(
-            'Message category: blocked (need help), conflict (resource clash), finding (important discovery), ' +
-              'request (direct ask), alert (urgent notification), handoff (context transfer)',
-          ),
-        content: z.string().optional().describe('Message content (required for send action)'),
-        taskId: z.string().optional().describe('Related task ID for context'),
+          .describe('Message category'),
+        content: z.string().optional().describe('Message content (required for send)'),
+        taskId: z.string().optional().describe('Related task ID'),
         filePaths: z.array(z.string()).optional().describe('File paths relevant to this message'),
         ttlMs: z
           .number()
           .int()
           .optional()
-          .describe(`Time-to-live in ms (default: ${MESSAGE_DEFAULT_TTL_MS / 3600000}h). Set 0 for swarm lifetime.`),
+          .describe(`Time-to-live in ms (0 for swarm lifetime)`),
 
         // Read parameters
-        unreadOnly: z.boolean().optional().default(true).describe('Only return unread messages (default: true)'),
+        unreadOnly: z.boolean().optional().default(true).describe('Only return unread messages'),
         categories: z.array(z.enum(MESSAGE_CATEGORY_KEYS)).optional().describe('Filter by message categories'),
-        fromAgentId: z.string().optional().describe('Filter messages from a specific agent'),
+        fromAgentId: z.string().optional().describe('Filter by sending agent'),
         limit: z
           .number()
           .int()
@@ -209,13 +206,13 @@ export const createSwarmMessageTool = (server: McpServer): void => {
           .max(100)
           .optional()
           .default(20)
-          .describe('Maximum messages to return (default: 20)'),
+          .describe('Maximum messages to return'),
 
         // Acknowledge parameters
         messageIds: z
           .array(z.string())
           .optional()
-          .describe('Specific message IDs to acknowledge. Omit to acknowledge all unread.'),
+          .describe('Message IDs to acknowledge (omit to acknowledge all unread)'),
 
         // Maintenance
         cleanup: z.boolean().optional().default(false).describe('Also clean up expired messages'),

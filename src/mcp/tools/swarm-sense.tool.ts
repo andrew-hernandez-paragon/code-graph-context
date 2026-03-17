@@ -109,36 +109,32 @@ export const createSwarmSenseTool = (server: McpServer): void => {
         types: z
           .array(z.enum(PHEROMONE_TYPES as [string, ...string[]]))
           .optional()
-          .describe(
-            'Filter by pheromone types. If empty, returns all types. Options: exploring, modifying, claiming, completed, warning, blocked, proposal, needs_review',
-          ),
-        nodeIds: z.array(z.string()).optional().describe('Filter by specific node IDs. If empty, searches all nodes.'),
+          .describe('Filter by pheromone types'),
+        nodeIds: z.array(z.string()).optional().describe('Filter by specific node IDs'),
         filePaths: z
           .array(z.string())
           .optional()
-          .describe(
-            'Filter by file paths (resolves to SourceFile nodeIds). Also matches pheromones placed via filePath.',
-          ),
+          .describe('Filter by file paths (resolves to SourceFile nodeIds)'),
         agentIds: z
           .array(z.string())
           .optional()
-          .describe('Filter by specific agent IDs. If empty, returns pheromones from all agents.'),
-        swarmId: z.string().optional().describe('Filter by swarm ID. If empty, returns pheromones from all swarms.'),
+          .describe('Filter by specific agent IDs'),
+        swarmId: z.string().optional().describe('Filter by swarm ID'),
         excludeAgentId: z
           .string()
           .optional()
-          .describe('Exclude pheromones from this agent ID (useful for seeing what OTHER agents are doing)'),
+          .describe('Exclude pheromones from this agent (see what others are doing)'),
         sessionId: z
           .string()
           .optional()
-          .describe('Filter pheromones by session ID. Use to recover context after compaction or session restart.'),
+          .describe('Filter by session ID for context recovery'),
         minIntensity: z
           .number()
           .min(0)
           .max(1)
           .optional()
           .default(0.3)
-          .describe('Minimum effective intensity after decay (0.0-1.0, default: 0.3)'),
+          .describe('Minimum effective intensity after decay'),
         limit: z
           .number()
           .int()
@@ -146,13 +142,13 @@ export const createSwarmSenseTool = (server: McpServer): void => {
           .max(500)
           .optional()
           .default(50)
-          .describe('Maximum number of pheromones to return (default: 50, max: 500)'),
+          .describe('Maximum pheromones to return'),
         includeStats: z.boolean().optional().default(false).describe('Include summary statistics by pheromone type'),
         cleanup: z
           .boolean()
           .optional()
           .default(false)
-          .describe('Run cleanup of fully decayed pheromones (intensity < 0.01)'),
+          .describe('Remove fully decayed pheromones'),
       },
     },
     async ({

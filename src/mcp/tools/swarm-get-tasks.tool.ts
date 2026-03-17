@@ -178,10 +178,10 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
         statuses: z
           .array(z.enum(TASK_STATUSES))
           .optional()
-          .describe('Filter by task statuses (e.g., ["available", "in_progress"])'),
-        types: z.array(z.enum(TASK_TYPES)).optional().describe('Filter by task types (e.g., ["implement", "fix"])'),
-        claimedBy: z.string().optional().describe('Filter tasks claimed by a specific agent'),
-        createdBy: z.string().optional().describe('Filter tasks created by a specific agent'),
+          .describe('Filter by task statuses'),
+        types: z.array(z.enum(TASK_TYPES)).optional().describe('Filter by task types'),
+        claimedBy: z.string().optional().describe('Filter by claiming agent'),
+        createdBy: z.string().optional().describe('Filter by creating agent'),
         minPriority: z
           .enum(Object.keys(TASK_PRIORITIES) as [string, ...string[]])
           .optional()
@@ -190,7 +190,7 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
           .enum(['priority', 'created', 'updated'])
           .optional()
           .default('priority')
-          .describe('Sort order: priority (highest first), created (newest first), updated'),
+          .describe('Sort order'),
         limit: z
           .number()
           .int()
@@ -198,8 +198,8 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
           .max(100)
           .optional()
           .default(20)
-          .describe('Maximum tasks to return (default: 20)'),
-        skip: z.number().int().min(0).optional().default(0).describe('Number of tasks to skip for pagination'),
+          .describe('Maximum tasks to return'),
+        skip: z.number().int().min(0).optional().default(0).describe('Tasks to skip for pagination'),
         includeStats: z
           .boolean()
           .optional()
@@ -209,7 +209,7 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
           .boolean()
           .optional()
           .default(false)
-          .describe('Include dependency graph for visualization'),
+          .describe('Include dependency graph'),
       },
     },
     async ({
