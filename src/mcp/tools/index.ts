@@ -15,9 +15,7 @@ import { createListWatchersTool } from './list-watchers.tool.js';
 import { createNaturalLanguageToCypherTool } from './natural-language-to-cypher.tool.js';
 import { createParseTypescriptProjectTool } from './parse-typescript-project.tool.js';
 import { createSearchCodebaseTool } from './search-codebase.tool.js';
-import { createRestoreSessionBookmarkTool, createSaveSessionBookmarkTool } from './session-bookmark.tool.js';
 import { createCleanupSessionTool } from './session-cleanup.tool.js';
-import { createRecallSessionNotesTool, createSaveSessionNoteTool } from './session-note.tool.js';
 import { createSessionRecallTool } from './session-recall.tool.js';
 import { createSessionSaveTool } from './session-save.tool.js';
 import { createStartWatchProjectTool } from './start-watch-project.tool.js';
@@ -102,20 +100,8 @@ export const registerAllTools = (server: McpServer): void => {
   // Register swarm messaging tools (direct agent-to-agent communication)
   createSwarmMessageTool(server);
 
-  // Register session bookmark tools (cross-session context continuity)
-  createSaveSessionBookmarkTool(server);
-  createRestoreSessionBookmarkTool(server);
-
-  // Register session note tools (durable observations and decisions)
-  createSaveSessionNoteTool(server);
-  createRecallSessionNotesTool(server);
-
-  // Register session cleanup tool
-  createCleanupSessionTool(server);
-
-  // Register unified session save tool
+  // Register session tools (unified save/recall + cleanup)
   createSessionSaveTool(server);
-
-  // Register unified session recall tool
   createSessionRecallTool(server);
+  createCleanupSessionTool(server);
 };
