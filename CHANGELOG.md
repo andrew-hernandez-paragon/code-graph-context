@@ -423,9 +423,9 @@ Existing graphs created with previous versions are **not compatible** with this 
 
 ---
 
-[2.3.0]: https://github.com/drewdrewH/code-graph-context/compare/v2.2.0...v2.3.0
-[2.2.0]: https://github.com/drewdrewH/code-graph-context/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/drewdrewH/code-graph-context/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/drewdrewH/code-graph-context/compare/v1.1.0...v2.0.0
-[1.1.0]: https://github.com/drewdrewH/code-graph-context/compare/v0.1.0...v1.1.0
-[0.1.0]: https://github.com/drewdrewH/code-graph-context/releases/tag/v0.1.0
+[2.3.0]: https://github.com/drew-paragon/code-graph-context/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/drew-paragon/code-graph-context/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/drew-paragon/code-graph-context/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/drew-paragon/code-graph-context/compare/v1.1.0...v2.0.0
+[1.1.0]: https://github.com/drew-paragon/code-graph-context/compare/v0.1.0...v1.1.0
+[0.1.0]: https://github.com/drew-paragon/code-graph-context/releases/tag/v0.1.0

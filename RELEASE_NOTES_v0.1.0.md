@@ -79,9 +79,9 @@ claude mcp add code-graph-context code-graph-context
 ## 🔗 Links
 
 - **NPM Package**: https://www.npmjs.com/package/code-graph-context
-- **GitHub**: https://github.com/drewdrewH/code-graph-context
+- **GitHub**: https://github.com/drew-paragon/code-graph-context
 - **Documentation**: See README.md
 
 ---
 
-**Full Changelog**: https://github.com/drewdrewH/code-graph-context/commits/v0.1.0
+**Full Changelog**: https://github.com/drew-paragon/code-graph-context/commits/v0.1.0
