@@ -53,18 +53,45 @@ export class LocalEmbeddingsService {
       const batch = texts.slice(i, i + httpLimit);
       const batchNum = Math.floor(i / httpLimit) + 1;
 
-      try {
-        const results = await sidecar.embed(batch, gpuBatchSize);
+      let results: number[][] | undefined;
+      let lastError: Error | undefined;
+
+      // Retry once on transient failures (sidecar crash, connection refused)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          results = await sidecar.embed(batch, gpuBatchSize);
+          break;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          const isTransient =
+            lastError.message.includes('ECONNREFUSED') ||
+            lastError.message.includes('ECONNRESET') ||
+            lastError.message.includes('timed out') ||
+            lastError.message.includes('fetch failed');
+
+          if (isTransient && attempt === 0) {
+            console.error(
+              `[embedding] Transient failure on batch ${batchNum}/${httpBatches} (${lastError.message}), restarting sidecar and retrying...`,
+            );
+            await sidecar.stop();
+            await sidecar.start();
+            continue;
+          }
+
+          const textLengths = batch.map((t) => t.length);
+          console.error(
+            `[embedding] FAILED HTTP batch ${batchNum}/${httpBatches} (${batch.length} texts, gpuBatchSize=${gpuBatchSize}, ` +
+              `textLengths=[min=${Math.min(...textLengths)}, max=${Math.max(...textLengths)}, total=${textLengths.reduce((a, b) => a + b, 0)}]): ${lastError.message}`,
+          );
+          throw lastError;
+        }
+      }
+
+      if (results) {
         allResults.push(...results);
         if (httpBatches > 1) {
           console.error(`[embedding] HTTP batch ${batchNum}/${httpBatches}: ${batch.length} texts embedded`);
         }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[embedding] FAILED HTTP batch ${batchNum}/${httpBatches} (${batch.length} texts, gpuBatchSize=${gpuBatchSize}): ${msg}`,
-        );
-        throw error;
       }
     }
 

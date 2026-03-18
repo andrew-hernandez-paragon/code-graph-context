@@ -162,7 +162,12 @@ export class EmbeddingSidecar {
 
     this.process.on('exit', (code, signal) => {
       if (!this.stopping) {
-        console.error(`[embedding-sidecar] Process exited unexpectedly (code=${code}, signal=${signal})`);
+        console.error(
+          `[embedding-sidecar] Process exited unexpectedly (pid=${childPid}, code=${code}, signal=${signal}, ` +
+            `inflight=${this.inflight}, queued=${this.waitQueue.length})`,
+        );
+      } else {
+        console.error(`[embedding-sidecar] Process stopped (pid=${childPid})`);
       }
       this.cleanup();
     });
@@ -390,6 +395,12 @@ export class EmbeddingSidecar {
       process.removeListener('exit', this._exitHandler);
       this._exitHandler = null;
     }
+    // Drain the wait queue — reject all queued callers so they don't hang forever
+    while (this.waitQueue.length > 0) {
+      const waiter = this.waitQueue.shift();
+      if (waiter) waiter(); // unblock; they'll fail on the dead connection and can retry
+    }
+    this.inflight = 0;
     this.process = null;
     this.readyPromise = null;
   }
