@@ -674,7 +674,7 @@ code-graph-context stop             # Stop Neo4j container
 ## Contributing
 
 ```bash
-git clone https://github.com/drew-paragon/code-graph-context.git
+git clone https://github.com/andrew-hernandez-paragon/code-graph-context.git
 cd code-graph-context
 npm install
 npm run build
@@ -693,6 +693,6 @@ MIT - see [LICENSE](LICENSE)
 
 ## Links
 
-- [Issues](https://github.com/drew-paragon/code-graph-context/issues)
+- [Issues](https://github.com/andrew-hernandez-paragon/code-graph-context/issues)
 - [MCP Documentation](https://modelcontextprotocol.io/docs)
 - [Neo4j](https://neo4j.com/)

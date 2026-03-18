@@ -23,7 +23,7 @@ Guidelines for contributing to this project.
 
 1. **Fork and clone**
 ```bash
-git clone https://github.com/drew-paragon/code-graph-context.git
+git clone https://github.com/andrew-hernandez-paragon/code-graph-context.git
 cd code-graph-context
 ```
 

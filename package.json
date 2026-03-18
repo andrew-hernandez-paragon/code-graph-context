@@ -1,12 +1,12 @@
 {
   "name": "code-graph-context",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "MCP server that builds code graphs to provide rich context to LLMs",
   "type": "module",
-  "homepage": "https://github.com/drew-paragon/code-graph-context#readme",
+  "homepage": "https://github.com/andrew-hernandez-paragon/code-graph-context#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/drew-paragon/code-graph-context.git"
+    "url": "git+https://github.com/andrew-hernandez-paragon/code-graph-context.git"
   },
   "keywords": [
     "mcp",
