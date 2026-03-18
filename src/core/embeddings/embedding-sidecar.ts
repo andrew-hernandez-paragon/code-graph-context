@@ -27,7 +27,7 @@ const DEFAULT_CONFIG: SidecarConfig = {
   model: process.env.EMBEDDING_MODEL ?? 'codesage/codesage-base-v2',
   startupTimeoutMs: 120_000, // 2 min — first run downloads the model
   requestTimeoutMs: parseInt(process.env.EMBEDDING_REQUEST_TIMEOUT_MS ?? '', 10) || 120_000,
-  idleTimeoutMs: 180_000, // 3 min — auto-shutdown after no requests
+  idleTimeoutMs: parseInt(process.env.EMBEDDING_IDLE_TIMEOUT_MS ?? '', 10) || 600_000, // 10 min — auto-shutdown after no requests
 };
 
 export class EmbeddingSidecar {
