@@ -5,7 +5,7 @@
 
 export const TIMEOUT_DEFAULTS = {
   neo4j: {
-    queryTimeoutMs: 30_000, // 30 seconds
+    queryTimeoutMs: 300_000, // 5 minutes — large monorepo edge imports need headroom
     connectionTimeoutMs: 10_000, // 10 seconds
   },
   openai: {
