@@ -209,7 +209,7 @@ export const DEFAULTS = {
   maxResultsDisplayed: 30,
   codeSnippetLength: 500, // Reduced from 1000 to control output size
   chainSnippetLength: 700,
-  maxEmbeddingChars: 30000, // ~7500 tokens, under 8192 limit for text-embedding-3-large
+  maxEmbeddingChars: 24000, // ~6000 tokens, safe margin for 8192 token limit on text-embedding-3-large
 } as const;
 
 // Parsing Configuration
@@ -314,5 +314,5 @@ export const CONFIG_FILE_PATTERNS = {
     '**/yarn.lock',
     '**/pnpm-lock.yaml',
   ],
-  maxFileSizeBytes: 512 * 1024, // 512 KB — skip large generated files
+  maxFileSizeBytes: 64 * 1024, // 64 KB — skip large config files (grafana dashboards, generated JSON, etc.)
 };
