@@ -45,7 +45,11 @@ interface LightweightParsedNode {
   semanticType?: string;
   properties: {
     name?: string;
-    context?: Record<string, any>; // Contains propertyTypes, routes, etc.
+    coreType?: string; // Duplicated from top-level for detection patterns that read properties.coreType
+    semanticType?: string; // Duplicated for detection patterns that read properties.semanticType
+    filePath?: string; // Needed for EXPOSES detection (same-file check)
+    parentClassName?: string; // Needed for EXPOSES detection (method→controller matching)
+    context?: Record<string, any>; // Contains constructorParamTypes, routes, etc.
   };
 }
 
@@ -261,7 +265,11 @@ export class WorkspaceParser {
             semanticType: parsedNode.semanticType,
             properties: {
               name: parsedNode.properties.name,
-              context: parsedNode.properties.context, // Contains propertyTypes, dependencies
+              coreType: parsedNode.properties.coreType,
+              semanticType: parsedNode.properties.semanticType,
+              filePath: parsedNode.properties.filePath,
+              parentClassName: parsedNode.properties.parentClassName,
+              context: parsedNode.properties.context, // Contains constructorParamTypes, dependencies
             },
           });
         }
@@ -376,6 +384,10 @@ export class WorkspaceParser {
         semanticType: node.properties.semanticType as string | undefined,
         properties: {
           name: node.properties.name as string | undefined,
+          coreType: node.properties.coreType as string | undefined,
+          semanticType: node.properties.semanticType as string | undefined,
+          filePath: node.properties.filePath as string | undefined,
+          parentClassName: node.properties.parentClassName as string | undefined,
           context: node.properties.context as Record<string, any> | undefined,
         },
       });
