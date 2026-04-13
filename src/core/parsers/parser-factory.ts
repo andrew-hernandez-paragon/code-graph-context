@@ -97,34 +97,48 @@ export class ParserFactory {
   }
 
   /**
-   * Auto-detect project type from workspace
+   * Auto-detect project type from workspace. Checks root package.json first,
+   * and for monorepos also scans workspace packages so NestJS declared only
+   * in sub-packages is still detected.
    */
   static async detectProjectType(workspacePath: string): Promise<ProjectType> {
     const fs = await import('fs/promises');
     const path = await import('path');
+    const { glob } = await import('glob');
+
+    const hasNestJSDep = (pkg: any): boolean => {
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      return '@nestjs/common' in deps || '@nestjs/core' in deps;
+    };
+
+    const checkPackageJson = async (pkgPath: string): Promise<boolean> => {
+      try {
+        const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf-8'));
+        return hasNestJSDep(pkg);
+      } catch {
+        return false;
+      }
+    };
 
     try {
-      const packageJsonPath = path.join(workspacePath, 'package.json');
-      const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf-8'));
-
-      const deps = {
-        ...packageJson.dependencies,
-        ...packageJson.devDependencies,
-      };
-
-      const hasNestJS = '@nestjs/common' in deps || '@nestjs/core' in deps;
-      const hasFairSquare =
-        '@fairsquare/core' in deps || '@fairsquare/server' in deps || packageJson.name === '@fairsquare/source';
-
-      if (hasFairSquare && hasNestJS) {
-        return ProjectType.BOTH;
-      } else if (hasFairSquare) {
-        return ProjectType.FAIRSQUARE;
-      } else if (hasNestJS) {
+      // Check root first
+      if (await checkPackageJson(path.join(workspacePath, 'package.json'))) {
         return ProjectType.NESTJS;
-      } else {
-        return ProjectType.VANILLA;
       }
+
+      // Scan sub-package.json files for monorepos (turborepo, npm/yarn/pnpm workspaces).
+      const subPackageJsons = await glob('*/*/package.json', {
+        cwd: workspacePath,
+        ignore: ['**/node_modules/**'],
+        absolute: true,
+      });
+      for (const pkgPath of subPackageJsons) {
+        if (await checkPackageJson(pkgPath)) {
+          return ProjectType.NESTJS;
+        }
+      }
+
+      return ProjectType.VANILLA;
     } catch (error) {
       console.warn('Could not detect project type, defaulting to vanilla TypeScript');
       return ProjectType.VANILLA;
