@@ -313,9 +313,17 @@ export const CONFIG_FILE_PATTERNS = {
     '**/.git/**',
     '**/coverage/**',
     '**/.next/**',
-    '**/package-lock.json', // Too large, not useful for search
+    '**/package-lock.json',
     '**/yarn.lock',
     '**/pnpm-lock.yaml',
+    // Local data, state, and volume directories
+    '**/docker_volumes/**',
+    '**/docker_data/**',
+    '**/tmp/**',
+    '**/.cache/**',
+    '**/__snapshots__/**',
+    '**/fixtures/**',
+    '**/seeds/**',
   ],
   maxFileSizeBytes: 64 * 1024, // 64 KB — skip large config files (grafana dashboards, generated JSON, etc.)
 };
