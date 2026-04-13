@@ -26,6 +26,7 @@ export interface CreateContainerOptions {
   boltPort?: number;
   password?: string;
   memory?: string;
+  pagecache?: string;
 }
 
 export interface EnsureNeo4jResult {
@@ -103,6 +104,7 @@ export const createContainer = (options: CreateContainerOptions = {}): boolean =
     boltPort = NEO4J_CONFIG.boltPort,
     password = NEO4J_CONFIG.defaultPassword,
     memory = '2G',
+    pagecache = '1G',
   } = options;
 
   const cmd = [
@@ -111,12 +113,14 @@ export const createContainer = (options: CreateContainerOptions = {}): boolean =
     `--restart unless-stopped`,
     `-p ${httpPort}:7474`,
     `-p ${boltPort}:7687`,
+    `-v code-graph-neo4j-data:/data`,
+    `-v code-graph-neo4j-logs:/logs`,
     `-e NEO4J_AUTH=neo4j/${password}`,
     `-e 'NEO4J_PLUGINS=["apoc"]'`,
     `-e NEO4J_dbms_security_procedures_unrestricted=apoc.*`,
     `-e NEO4J_server_memory_heap_initial__size=1G`,
     `-e NEO4J_server_memory_heap_max__size=${memory}`,
-    `-e NEO4J_server_memory_pagecache_size=2G`,
+    `-e NEO4J_server_memory_pagecache_size=${pagecache}`,
     NEO4J_CONFIG.image,
   ].join(' ');
 

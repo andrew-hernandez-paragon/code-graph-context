@@ -29,10 +29,10 @@ export const EXCLUDE_PATTERNS_REGEX = [
 
 // Glob patterns for use with glob library
 export const EXCLUDE_PATTERNS_GLOB = [
-  'node_modules/**',
-  'dist/**',
-  'build/**',
-  'coverage/**',
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/coverage/**',
   '**/*.d.ts',
   '**/*.spec.ts',
   '**/*.test.ts',

@@ -379,6 +379,7 @@ interface InitOptions {
   httpPort?: string;
   password?: string;
   memory?: string;
+  pagecache?: string;
   force?: boolean;
 }
 
@@ -389,7 +390,8 @@ const runInit = async (options: InitOptions): Promise<void> => {
   const boltPort = options.port ? parseInt(options.port, 10) : NEO4J_CONFIG.boltPort;
   const httpPort = options.httpPort ? parseInt(options.httpPort, 10) : NEO4J_CONFIG.httpPort;
   const password = options.password ?? NEO4J_CONFIG.defaultPassword;
-  const memory = options.memory ?? '4G';
+  const memory = options.memory ?? '2G';
+  const pagecache = options.pagecache ?? '1G';
 
   header('Code Graph Context Setup');
 
@@ -444,7 +446,7 @@ const runInit = async (options: InitOptions): Promise<void> => {
     s.stop(true, 'Container started');
   } else if (status === 'not-found' || options.force) {
     const s = spinner('Creating Neo4j container...');
-    const created = createContainer({ httpPort, boltPort, password, memory });
+    const created = createContainer({ httpPort, boltPort, password, memory, pagecache });
     if (!created) {
       s.stop(false, 'Failed to create container');
       console.log(`
@@ -604,7 +606,8 @@ program
   .option('-p, --port <port>', 'Neo4j Bolt port', '7687')
   .option('--http-port <port>', 'Neo4j Browser port', '7474')
   .option('--password <password>', 'Neo4j password', 'PASSWORD')
-  .option('-m, --memory <size>', 'Max heap memory (e.g., 2G, 4G)', '4G')
+  .option('-m, --memory <size>', 'Max heap memory (e.g., 2G, 4G)', '2G')
+  .option('--pagecache <size>', 'Page cache size (e.g., 1G, 2G)', '1G')
   .option('-f, --force', 'Recreate container even if exists')
   .action(runInit);
 
