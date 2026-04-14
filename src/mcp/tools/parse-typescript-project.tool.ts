@@ -199,8 +199,8 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
               configFileGlobs,
             },
             resourceLimits: {
-              maxOldGenerationSizeMb: 8192, // 8GB heap for large monorepos
-              maxYoungGenerationSizeMb: 1024,
+              maxOldGenerationSizeMb: parseInt(process.env.PARSER_MAX_OLD_SPACE_MB ?? '', 10) || 8192,
+              maxYoungGenerationSizeMb: parseInt(process.env.PARSER_MAX_YOUNG_SPACE_MB ?? '', 10) || 1024,
             },
           });
 

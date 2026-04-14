@@ -133,8 +133,8 @@ export class ChunkWorkerPool {
     const worker = new Worker(workerPath, {
       workerData: workerConfig,
       resourceLimits: {
-        maxOldGenerationSizeMb: 2048,
-        maxYoungGenerationSizeMb: 512,
+        maxOldGenerationSizeMb: parseInt(process.env.CHUNK_WORKER_MAX_OLD_SPACE_MB ?? '', 10) || 2048,
+        maxYoungGenerationSizeMb: parseInt(process.env.CHUNK_WORKER_MAX_YOUNG_SPACE_MB ?? '', 10) || 512,
       },
     });
 
