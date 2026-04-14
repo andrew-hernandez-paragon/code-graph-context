@@ -12,7 +12,11 @@ import { parentPort, workerData } from 'worker_threads';
 import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-dotenv.config({ path: join(__dirname, '..', '..', '..', '.env') });
+// `quiet: true` is MANDATORY: dotenv otherwise writes a `[dotenv@X.Y.Z] injecting env ...`
+// tip message to stdout on every load. Worker threads share stdout with the parent MCP
+// process, and any non-JSON-RPC byte on that pipe causes Claude Code to close the
+// transport with a JSON parse error and then SIGTERM the server.
+dotenv.config({ path: join(__dirname, '..', '..', '..', '.env'), quiet: true });
 
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { ParserFactory, ProjectType } from '../../core/parsers/parser-factory.js';

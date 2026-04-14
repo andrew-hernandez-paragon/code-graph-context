@@ -12,7 +12,8 @@ import { parentPort, workerData } from 'worker_threads';
 import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-dotenv.config({ path: join(__dirname, '..', '..', '..', '.env') });
+// `quiet: true` is MANDATORY — see parse-coordinator.ts for the reason.
+dotenv.config({ path: join(__dirname, '..', '..', '..', '.env'), quiet: true });
 
 import { ParserFactory } from '../../core/parsers/parser-factory.js';
 import { StreamingParser } from '../../core/parsers/typescript-parser.js';
