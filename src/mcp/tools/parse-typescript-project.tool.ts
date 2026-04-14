@@ -293,11 +293,9 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           useStreaming === 'always' ||
           (useStreaming === 'auto' && totalFiles > PARSING.streamingThreshold && chunkSize > 0);
 
-        console.error(`📊 Project has ${totalFiles} files. Streaming: ${shouldUseStreaming ? 'enabled' : 'disabled'}`);
+        await debugLog('Project file count resolved', { totalFiles, streaming: shouldUseStreaming });
 
         if (shouldUseStreaming && clearExisting !== false) {
-          // Use streaming import for large projects
-          console.error(`🚀 Using streaming import with chunk size ${chunkSize}`);
           await debugLog('Using streaming import', { totalFiles, chunkSize });
 
           // Create Project node BEFORE starting import (status: parsing)
@@ -389,7 +387,6 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
 
         const { nodes, edges, savedCrossFileEdges, resolvedProjectId: finalProjectId } = graphData;
 
-        console.error(`Parsed ${nodes.length} nodes / ${edges.length} edges for project ${finalProjectId}`);
         await debugLog('Parsing completed', {
           nodeCount: nodes.length,
           edgeCount: edges.length,
@@ -398,7 +395,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
 
         const outputPath = join(projectPath, FILE_PATHS.graphOutput);
         writeFileSync(outputPath, JSON.stringify(graphData, null, LOG_CONFIG.jsonIndentation));
-        console.error(`Graph data written to ${outputPath}`);
+        await debugLog('Graph data written to disk', { outputPath });
 
         try {
           // Set projectId for project-scoped operations (clear, indexes)
@@ -416,7 +413,6 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
             await debugLog('Cross-file edges recreated', { recreatedCount, expected: savedCrossFileEdges.length });
           }
 
-          console.error('Graph generation completed:', result);
           await debugLog('Neo4j import completed', result);
 
           // Ingest config files
@@ -452,7 +448,6 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
               await debugLog('File watcher started', { projectId: finalProjectId, status: watcherInfo.status });
               watchMessage = `\n\nFile watcher started (debounce: ${watchDebounceMs}ms). Graph will auto-update on file changes.`;
             } catch (watchError) {
-              console.error('Failed to start file watcher:', watchError);
               await debugLog('File watcher failed to start', { error: watchError });
               watchMessage = `\n\nWarning: Failed to start file watcher: ${watchError instanceof Error ? watchError.message : String(watchError)}`;
             }
@@ -471,7 +466,6 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
               watchMessage,
           );
         } catch (neo4jError) {
-          console.error('Neo4j import failed:', neo4jError);
           await debugLog('Neo4j import failed', neo4jError);
 
           // Update Project node status to failed
@@ -491,7 +485,6 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           );
         }
       } catch (error) {
-        console.error('Parse tool error:', error);
         await debugLog('Parse tool error', { projectPath, tsconfigPath, error });
         // Stop sidecar to free memory (restarts lazily on next embed request)
         await stopEmbeddingSidecar();

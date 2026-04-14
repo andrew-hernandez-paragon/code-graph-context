@@ -55,7 +55,7 @@ export class GraphGeneratorHandler {
     graphJsonPath: string,
     clearExisting = true,
   ): Promise<ImportResult> {
-    console.error(`Generating graph from JSON file: ${graphJsonPath}`);
+    await debugLog('Generating graph from JSON file', { graphJsonPath });
     const graphData = await this.loadGraphData(graphJsonPath);
     return this.generateGraphFromData(graphData.nodes, graphData.edges, clearExisting, graphData.metadata);
   }
@@ -85,8 +85,6 @@ export class GraphGeneratorHandler {
     });
 
     try {
-      console.error(`Generating graph with ${nodes.length} nodes and ${edges.length} edges`);
-
       if (clearExisting) {
         await this.clearExistingData();
       }
@@ -109,7 +107,7 @@ export class GraphGeneratorHandler {
       await debugLog('Graph generation completed', result);
       return result;
     } catch (error) {
-      console.error('generateGraph error:', error);
+      console.error(JSON.stringify({ level: 'error', message: 'Graph generation error', error: String(error) }));
       await debugLog('Graph generation error', error);
       throw error;
     }
@@ -128,14 +126,14 @@ export class GraphGeneratorHandler {
       absolute: true,
     });
 
-    console.error(`[config-ingest] Found ${files.length} config files to ingest`);
+    await debugLog('Config ingest: files discovered', { count: files.length });
 
     const nodes: Neo4jNode[] = [];
 
     for (const file of files) {
       const stats = await fs.stat(file);
       if (stats.size > maxFileSizeBytes) {
-        console.error(`[config-ingest] Skipping ${file} (${stats.size} bytes > ${maxFileSizeBytes})`);
+        await debugLog('Config ingest: skipping oversize file', { file, size: stats.size, limit: maxFileSizeBytes });
         continue;
       }
 
@@ -178,7 +176,7 @@ export class GraphGeneratorHandler {
       });
     }
 
-    console.error(`[config-ingest] Importing ${nodes.length} config file nodes`);
+    await debugLog('Config ingest: importing nodes', { count: nodes.length });
     await this.importNodes(nodes);
 
     return { nodesCreated: nodes.length };
@@ -199,18 +197,15 @@ export class GraphGeneratorHandler {
 
   private async clearExistingData(): Promise<void> {
     if (this.projectId) {
-      console.error(`Clearing existing graph data for project: ${this.projectId}...`);
       await this.neo4jService.run(QUERIES.CLEAR_PROJECT, { projectId: this.projectId });
       await debugLog('Existing project graph data cleared', { projectId: this.projectId });
     } else {
-      console.error('Clearing ALL existing graph data (no projectId set)...');
       await this.neo4jService.run(QUERIES.CLEAR_DATABASE);
       await debugLog('Existing graph data cleared');
     }
   }
 
   private async createProjectIndexes(): Promise<void> {
-    console.error('Creating project indexes...');
     await this.neo4jService.run(QUERIES.CREATE_PROJECT_INDEX_EMBEDDED);
     await this.neo4jService.run(QUERIES.CREATE_PROJECT_INDEX_SOURCEFILE);
     await this.neo4jService.run(QUERIES.CREATE_PROJECT_ID_INDEX_EMBEDDED);
@@ -225,7 +220,7 @@ export class GraphGeneratorHandler {
 
   private async importNodes(nodes: Neo4jNode[]): Promise<void> {
     const batchSize = DEFAULTS.nodeBatchSize;
-    console.error(`Importing ${nodes.length} nodes with embeddings (batch size: ${batchSize})...`);
+    await debugLog('Importing nodes with embeddings', { count: nodes.length, batchSize });
 
     // Pipelined: write batch N to Neo4j while embedding batch N+1.
     // This overlaps GPU work with Neo4j I/O.
@@ -243,7 +238,6 @@ export class GraphGeneratorHandler {
 
       // Start Neo4j write — don't await, overlap with next batch's embedding
       pendingWrite = this.neo4jService.run(QUERIES.CREATE_NODE, { nodes: batch }).then(async (result) => {
-        console.error(`Created ${result[0].created} nodes in batch ${batchStart}-${batchEnd}`);
         await debugLog('Node batch imported', { batchStart, batchEnd, created: result[0].created });
       });
     }
@@ -295,9 +289,12 @@ export class GraphGeneratorHandler {
       const effectiveBatchSize =
         parseInt(process.env.EMBEDDING_BATCH_SIZE ?? '', 10) || EMBEDDING_BATCH_CONFIG.maxBatchSize;
       const totalBatches = Math.ceil(texts.length / effectiveBatchSize);
-      console.error(
-        `[embedding] Starting ${texts.length} texts in ~${totalBatches} batches (effective_batch_size=${effectiveBatchSize}, config_max=${EMBEDDING_BATCH_CONFIG.maxBatchSize})`,
-      );
+      await debugLog('Embedding batch starting', {
+        textCount: texts.length,
+        totalBatches,
+        effectiveBatchSize,
+        configMax: EMBEDDING_BATCH_CONFIG.maxBatchSize,
+      });
 
       try {
         const embeddings = await this.embeddingsService.embedTextsInBatches(texts, EMBEDDING_BATCH_CONFIG.maxBatchSize);
@@ -317,7 +314,6 @@ export class GraphGeneratorHandler {
           };
         });
 
-        console.error(`[embedding] Done: ${embeddedCount}/${texts.length} nodes embedded`);
         await debugLog('Batch embedding completed', {
           totalNodes: nodes.length,
           nodesEmbedded: embeddedCount,
@@ -325,7 +321,7 @@ export class GraphGeneratorHandler {
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        console.error(`[embedding] FAILED: ${msg}`);
+        console.error(JSON.stringify({ level: 'error', message: 'Embedding failed', error: msg }));
         await debugLog('Embedding failed', { error: msg });
         throw error;
       }
@@ -336,7 +332,7 @@ export class GraphGeneratorHandler {
 
   private async importEdges(edges: any[]): Promise<void> {
     const batchSize = DEFAULTS.edgeBatchSize;
-    console.error(`Importing ${edges.length} edges using APOC (batch size: ${batchSize})...`);
+    await debugLog('Importing edges via APOC', { count: edges.length, batchSize });
 
     for (let i = 0; i < edges.length; i += batchSize) {
       const batch = edges.slice(i, i + batchSize).map((edge) => ({
@@ -350,7 +346,6 @@ export class GraphGeneratorHandler {
       });
 
       const batchEnd = Math.min(i + batchSize, edges.length);
-      console.error(`Created ${result[0].created} edges in batch ${i + 1}-${batchEnd}`);
 
       await debugLog('Edge batch imported', {
         batchStart: i + 1,
@@ -362,7 +357,6 @@ export class GraphGeneratorHandler {
 
   private async createVectorIndexes(): Promise<void> {
     const dims = getEmbeddingDimensions();
-    console.error(`Creating vector indexes (dimensions: ${dims})...`);
     await this.neo4jService.run(QUERIES.CREATE_EMBEDDED_VECTOR_INDEX(dims));
     await this.neo4jService.run(QUERIES.CREATE_SESSION_NOTES_VECTOR_INDEX(dims));
     await debugLog('Vector indexes created', { dimensions: dims });

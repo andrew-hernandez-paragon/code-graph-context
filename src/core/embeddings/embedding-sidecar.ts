@@ -150,8 +150,12 @@ export class EmbeddingSidecar {
     // Store pid for synchronous cleanup on exit
     const childPid = this.process.pid;
 
-    // Forward stderr for visibility (model loading progress, errors)
+    // Forward stderr only when CGC_DEBUG is set — the sidecar can be chatty
+    // during embedding (per-batch progress), and flooding stderr through
+    // Claude Code's MCP pipe can back-pressure the worker.
+    const forwardSidecarStderr = process.env.CGC_DEBUG === '1' || process.env.CGC_DEBUG === 'true';
     this.process.stderr?.on('data', (data: Buffer) => {
+      if (!forwardSidecarStderr) return;
       const line = data.toString().trim();
       if (line) console.error(`[embedding-sidecar] ${line}`);
     });
