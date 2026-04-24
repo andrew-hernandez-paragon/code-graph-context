@@ -1967,12 +1967,29 @@ export class TypeScriptParser {
    */
   public addParsedNodesFromChunk(nodes: Neo4jNode[]): void {
     for (const node of nodes) {
+      // Keep only the fields read by cross-chunk edge resolution and framework
+      // enhancements. The full node (sourceCode, startLine/endLine, createdAt,
+      // normalizedHash, etc.) is already in Neo4j — duplicating it in this
+      // accumulator is a large memory cost on monorepos.
+      const p = node.properties;
+      const leanProperties = {
+        id: p.id,
+        projectId: p.projectId,
+        name: p.name,
+        coreType: p.coreType,
+        filePath: p.filePath,
+        semanticType: p.semanticType,
+        ...(p.parentClassName !== undefined && { parentClassName: p.parentClassName }),
+        ...(p.typeAnnotation !== undefined && { typeAnnotation: p.typeAnnotation }),
+        ...(p.visibility !== undefined && { visibility: p.visibility }),
+        ...(p.context !== undefined && { context: p.context }),
+      } as Neo4jNodeProperties;
       const parsedNode: ParsedNode = {
         id: node.id,
-        coreType: node.properties.coreType as CoreNodeType,
-        semanticType: node.properties.semanticType,
+        coreType: p.coreType as CoreNodeType,
+        semanticType: p.semanticType,
         labels: node.labels,
-        properties: node.properties,
+        properties: leanProperties,
       };
       this.parsedNodes.set(node.id, parsedNode);
       this.indexNodeForCallsResolution(parsedNode);
