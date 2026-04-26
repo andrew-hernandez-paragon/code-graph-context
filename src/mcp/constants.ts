@@ -52,6 +52,7 @@ export const TOOL_NAMES = {
   swarmMessage: 'swarm_message',
   sessionSave: 'session_save',
   sessionRecall: 'session_recall',
+  sessionUpdate: 'session_update',
 } as const;
 
 // Tool Metadata
@@ -192,6 +193,10 @@ Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_ta
   [TOOL_NAMES.sessionRecall]: {
     title: 'Session Recall',
     description: `Session persistence tool. Retrieve saved session context. Provide query for semantic note search, or sessionId to restore the latest bookmark and all notes for that session.`,
+  },
+  [TOOL_NAMES.sessionUpdate]: {
+    title: 'Session Update',
+    description: `Session persistence tool. In-place revision of an existing SessionNote — typo fix, severity change, lastValidated bump, minor content correction, aboutNodeIds resync, or supersession marker. For substantive content changes or decision reversals, prefer session_save with supersededBy set so history is preserved as a new note.`,
   },
   [TOOL_NAMES.swarmMessage]: {
     title: 'Swarm Message',

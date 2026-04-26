@@ -18,6 +18,7 @@ import { createSearchCodebaseTool } from './search-codebase.tool.js';
 import { createCleanupSessionTool } from './session-cleanup.tool.js';
 import { createSessionRecallTool } from './session-recall.tool.js';
 import { createSessionSaveTool } from './session-save.tool.js';
+import { createSessionUpdateTool } from './session-update.tool.js';
 import { createStartWatchProjectTool } from './start-watch-project.tool.js';
 import { createStopWatchProjectTool } from './stop-watch-project.tool.js';
 import { createSwarmAdvanceTaskTool } from './swarm-advance-task.tool.js';
@@ -100,8 +101,9 @@ export const registerAllTools = (server: McpServer): void => {
   // Register swarm messaging tools (direct agent-to-agent communication)
   createSwarmMessageTool(server);
 
-  // Register session tools (unified save/recall + cleanup)
+  // Register session tools (unified save/recall + cleanup + in-place update)
   createSessionSaveTool(server);
   createSessionRecallTool(server);
+  createSessionUpdateTool(server);
   createCleanupSessionTool(server);
 };

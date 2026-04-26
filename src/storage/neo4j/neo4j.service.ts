@@ -65,10 +65,54 @@ export class Neo4jService {
   }
 }
 
+/**
+ * Labels preserved across project reparses.
+ *
+ * `CLEAR_PROJECT` deletes nodes scoped to a `projectId` so the parser can
+ * rebuild code structure; the labels listed here represent persistent
+ * memory and coordination state that must outlive a reparse:
+ *
+ * - `SessionNote`     — knowledge captured by agents (architectural,
+ *                       insight, bug, decision, risk, todo).
+ * - `SessionBookmark` — working-state snapshots for compaction recovery.
+ * - `Pheromone`       — stigmergic coordination markers (notably
+ *                       `kind: warning`, which is permanent by design).
+ * - `Project`         — per-project metadata; preserving avoids the
+ *                       upsert→clear→update no-op latent bug in
+ *                       parse-typescript-project.tool.ts.
+ *
+ * SwarmTask and SwarmMessage are intentionally NOT preserved — they
+ * are active-mycel-run state with TTL/cleanup of their own.
+ *
+ * To extend: add the new label here. Drift is expected to be low; the
+ * denylist remains the single source of truth for "what is NOT code."
+ */
+export const PRESERVED_LABELS = ['SessionNote', 'SessionBookmark', 'Pheromone', 'Project'] as const;
+
+const buildLabelDenylistClause = (labels: readonly string[]): string =>
+  labels.map((label) => `AND NOT n:${label}`).join(' ');
+
 export const QUERIES = {
-  // Project-scoped deletion - only deletes nodes for the specified project
-  // Uses APOC batched deletion to avoid transaction memory limits on large projects
+  // Project-scoped deletion — preserves persistent memory / coordination labels
+  // (see PRESERVED_LABELS). Code nodes (SourceFile, ClassDeclaration, etc.) are
+  // deleted so the parser can rebuild them; SessionNote/SessionBookmark/
+  // Pheromone/Project survive. Edges from preserved nodes to deleted code nodes
+  // are recreated post-parse via session-edge-recovery.helpers.ts.
+  // Uses APOC batched deletion to avoid transaction memory limits.
   CLEAR_PROJECT: `
+    CALL apoc.periodic.iterate(
+      'MATCH (n) WHERE n.projectId = $projectId ${buildLabelDenylistClause(PRESERVED_LABELS)} RETURN n',
+      'DETACH DELETE n',
+      {batchSize: 1000, params: {projectId: $projectId}}
+    )
+    YIELD batches, total
+    RETURN batches, total
+  `,
+
+  // Full project nuke — no denylist, deletes EVERYTHING including session/
+  // coordination data for the project. For tests and explicit user-initiated
+  // wipes only. Not exposed via the parse tool's surface.
+  CLEAR_PROJECT_FORCE: `
     CALL apoc.periodic.iterate(
       'MATCH (n) WHERE n.projectId = $projectId RETURN n',
       'DETACH DELETE n',
@@ -150,6 +194,21 @@ export const QUERIES = {
   }}
 `,
 
+  CREATE_SESSION_BOOKMARKS_VECTOR_INDEX: (dimensions: number) => `
+  CREATE VECTOR INDEX session_bookmarks_idx IF NOT EXISTS
+  FOR (n:SessionBookmark) ON (n.embedding)
+  OPTIONS {indexConfig: {
+    \`vector.dimensions\`: ${dimensions},
+    \`vector.similarity_function\`: 'cosine'
+  }}
+`,
+
+  SET_BOOKMARK_EMBEDDING_QUERY: `
+    MATCH (b:SessionBookmark {id: $bookmarkId, projectId: $projectId})
+    SET b.embedding = $embedding
+    RETURN b.id AS bookmarkId
+  `,
+
   // Indexes for efficient SessionBookmark and SessionNote lookups
   CREATE_SESSION_BOOKMARK_INDEX:
     'CREATE INDEX session_bookmark_idx IF NOT EXISTS FOR (n:SessionBookmark) ON (n.projectId, n.sessionId)',
@@ -227,6 +286,73 @@ export const QUERIES = {
     WHERE endNode.projectId = $projectId
     CALL apoc.create.relationship(startNode, edge.edgeType, edge.edgeProperties, endNode) YIELD rel
     RETURN count(rel) AS recreatedCount
+  `,
+
+  // ── Session/coordination edge recovery (Phase 1.4) ──────────────────────
+  //
+  // After CLEAR_PROJECT (which preserves SessionNote/Bookmark/Pheromone/Project),
+  // code nodes are recreated with deterministic IDs. The :ABOUT/:REFERENCES/
+  // :MARKS edges to those code nodes were dropped by DETACH DELETE; recreate
+  // them by matching the new code nodes against the persisted ID arrays.
+  //
+  // All queries are MERGE-based and idempotent. Filter out other session/
+  // coordination labels in the target match — same guard as session-save.
+
+  // SessionNote -[:ABOUT]-> code  (uses aboutNodeIds property added in 1.3)
+  RECREATE_ABOUT_EDGES: `
+    MATCH (n:SessionNote {projectId: $projectId})
+    WHERE n.aboutNodeIds IS NOT NULL AND size(n.aboutNodeIds) > 0
+    UNWIND n.aboutNodeIds AS aboutId
+    MATCH (target {id: aboutId, projectId: $projectId})
+    WHERE NOT target:SessionNote
+      AND NOT target:SessionBookmark
+      AND NOT target:Pheromone
+      AND NOT target:SwarmTask
+    MERGE (n)-[r:ABOUT]->(target)
+    RETURN count(r) AS recreated
+  `,
+
+  // SessionBookmark -[:REFERENCES]-> code  (workingSetNodeIds already a property)
+  RECREATE_REFERENCES_EDGES: `
+    MATCH (b:SessionBookmark {projectId: $projectId})
+    WHERE b.workingSetNodeIds IS NOT NULL AND size(b.workingSetNodeIds) > 0
+    UNWIND b.workingSetNodeIds AS targetId
+    MATCH (target {id: targetId, projectId: $projectId})
+    WHERE NOT target:SessionNote
+      AND NOT target:SessionBookmark
+      AND NOT target:Pheromone
+      AND NOT target:SwarmTask
+    MERGE (b)-[r:REFERENCES]->(target)
+    RETURN count(r) AS recreated
+  `,
+
+  // Pheromone -[:MARKS]-> code  (nodeId already a property; if it was a
+  // filePath sentinel because resolution failed at create time, the MATCH
+  // simply finds nothing and the pheromone stays unlinked — matches existing
+  // swarm-pheromone.tool.ts behavior).
+  RECREATE_MARKS_EDGES: `
+    MATCH (p:Pheromone {projectId: $projectId})
+    WHERE p.nodeId IS NOT NULL
+    MATCH (target {id: p.nodeId, projectId: $projectId})
+    WHERE NOT target:Pheromone
+      AND NOT target:SessionNote
+      AND NOT target:SessionBookmark
+      AND NOT target:SwarmTask
+    MERGE (p)-[r:MARKS]->(target)
+    RETURN count(r) AS recreated
+  `,
+
+  // Stale-reference detection — counts SessionNote.aboutNodeIds entries that
+  // do not resolve to a current node in the graph. Surfaced in parse summary
+  // so users see which notes have orphaned references after reparse.
+  COUNT_STALE_ABOUT_REFS: `
+    MATCH (n:SessionNote {projectId: $projectId})
+    WHERE n.aboutNodeIds IS NOT NULL AND size(n.aboutNodeIds) > 0
+    UNWIND n.aboutNodeIds AS aboutId
+    OPTIONAL MATCH (target {id: aboutId, projectId: $projectId})
+    WITH n.id AS noteId, aboutId, target
+    WHERE target IS NULL
+    RETURN count(*) AS staleCount
   `,
 
   // Note: Dangling edge cleanup is not needed because:

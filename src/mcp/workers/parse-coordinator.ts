@@ -30,6 +30,7 @@ import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { PARSING, CONFIG_FILE_PATTERNS } from '../constants.js';
 import { GraphGeneratorHandler } from '../handlers/graph-generator.handler.js';
 import { ParallelImportHandler } from '../handlers/parallel-import.handler.js';
+import { recoverSessionEdges } from '../handlers/session-edge-recovery.helpers.js';
 import { StreamingImportHandler } from '../handlers/streaming-import.handler.js';
 
 interface WorkerData {
@@ -214,6 +215,11 @@ const runParser = async (): Promise<void> => {
     );
     totalNodesImported += configResult.nodesCreated;
     await debugLog('Config file ingestion completed', { nodesCreated: configResult.nodesCreated });
+
+    // Recreate :ABOUT/:REFERENCES/:MARKS edges from preserved session/
+    // coordination nodes (Phase 1.4). Idempotent and non-fatal.
+    const edgeRecovery = await recoverSessionEdges(neo4jService, resolvedProjectId);
+    await debugLog('Session edge recovery (worker)', edgeRecovery);
 
     await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
       projectId: resolvedProjectId,

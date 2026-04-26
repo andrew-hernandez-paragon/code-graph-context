@@ -64,6 +64,9 @@ const CREATE_SESSION_NOTE_QUERY = `
     content: $content,
     category: $category,
     severity: $severity,
+    aboutNodeIds: $aboutNodeIds,
+    lastValidated: timestamp(),
+    supersededBy: $supersededBy,
     createdAt: timestamp(),
     expiresAt: $expiresAt
   })
@@ -143,8 +146,15 @@ export const createSessionSaveTool = (server: McpServer): void => {
           .describe('Note category'),
         severity: z.enum(['info', 'warning', 'critical']).optional().default('info').describe('Note severity'),
         aboutNodeIds: z.array(z.string()).optional().describe('Code node IDs this note is about'),
+        supersededBy: z
+          .string()
+          .nullable()
+          .optional()
+          .describe(
+            'Note ID that obsoletes this one. Recall filters out notes with non-null supersededBy by default. Use to tombstone a note that has a replacement, or to mark a note as outdated without a replacement (set to any non-null value).',
+          ),
         expiresInHours: z.number().optional().describe('Auto-expire note after N hours'),
-        metadata: z.string().optional().describe('Additional structured data as JSON string'),
+        metadata: z.string().optional().describe('Additional structured data as JSON string (bookmark only — silently ignored on note saves)'),
       },
     },
     async ({
@@ -162,6 +172,7 @@ export const createSessionSaveTool = (server: McpServer): void => {
       category,
       severity = 'info',
       aboutNodeIds = [],
+      supersededBy = null,
       expiresInHours,
       metadata,
     }) => {
@@ -257,12 +268,36 @@ export const createSessionSaveTool = (server: McpServer): void => {
               ? bm.linkedNodes.toNumber()
               : (bm.linkedNodes ?? 0);
 
+          // Embed the bookmark for semantic recall (Phase 1.5b).
+          // Mirror of the note-embedding pattern below: best-effort, non-fatal.
+          let bookmarkHasEmbedding = false;
+          try {
+            await neo4jService.run(QUERIES.CREATE_SESSION_BOOKMARKS_VECTOR_INDEX(getEmbeddingDimensions()));
+            const embeddingsService = new EmbeddingsService();
+            const embeddingText = [taskContext!, summary!, findings, nextSteps]
+              .filter((s) => s && s.length > 0)
+              .join('\n\n');
+            const embedding = await embeddingsService.embedText(embeddingText);
+            await neo4jService.run(QUERIES.SET_BOOKMARK_EMBEDDING_QUERY, {
+              bookmarkId,
+              projectId: resolvedProjectId,
+              embedding,
+            });
+            bookmarkHasEmbedding = true;
+          } catch (embErr) {
+            await debugLog('Session save bookmark embedding failed (non-fatal)', {
+              error: String(embErr),
+              bookmarkId,
+            });
+          }
+
           result.bookmark = {
             bookmarkId: bm.id,
             summary: bm.summary,
             taskContext: bm.taskContext,
             workingSetSize: workingSetNodeIds!.length,
             linkedNodes,
+            hasEmbedding: bookmarkHasEmbedding,
             createdAt:
               typeof bm.createdAt === 'object' && bm.createdAt?.toNumber ? bm.createdAt.toNumber() : bm.createdAt,
             message: `Session bookmark saved. ${linkedNodes} of ${workingSetNodeIds!.length} working set nodes linked in graph.`,
@@ -284,6 +319,7 @@ export const createSessionSaveTool = (server: McpServer): void => {
             category: category!,
             severity,
             aboutNodeIds,
+            supersededBy,
             expiresAt,
           });
 

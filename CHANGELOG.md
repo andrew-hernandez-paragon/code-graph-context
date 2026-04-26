@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - Graph as Persistent Memory - 2026-04-26
+
+### Changed (BREAKING for tooling that relies on `CLEAR_PROJECT` nuking everything)
+
+- `parse_typescript_project` with `clearExisting: true` (the default) no longer
+  deletes `SessionNote`, `SessionBookmark`, `Pheromone`, or `Project` nodes for
+  the target project. Code nodes (SourceFile, ClassDeclaration, etc.) are still
+  rebuilt as before. The denylist is exposed as the `PRESERVED_LABELS` constant
+  in `src/storage/neo4j/neo4j.service.ts`.
+- After parse completes, `:ABOUT`, `:REFERENCES`, and `:MARKS` edges from
+  preserved nodes to the (rebuilt) code nodes are automatically recreated using
+  the deterministic node IDs persisted on each preserved node. Orphan references
+  (IDs no longer present after reparse) are surfaced via the parse-success
+  message and `session_recall`'s per-note `staleAboutNodeIds`.
+
+### Added
+
+- **`SessionNote.aboutNodeIds`, `lastValidated`, `supersededBy` properties**
+  (auto-migrated on first MCP startup after upgrade). `aboutNodeIds` enables
+  :ABOUT-edge recovery after reparse; `lastValidated` powers the recall
+  freshness rerank; `supersededBy` is the single mechanism for "is this
+  current?" — non-null filters the note out of default recall.
+- **`session_recall` returns** `lastValidated`, `supersededBy`, `aboutNodeIds`,
+  `staleAboutNodeIds` per note. Filters out superseded notes by default; pass
+  `includeSuperseded: true` to surface history.
+- **`SessionBookmark.embedding`** — bookmarks are now embedded on save and
+  recallable via semantic search. New `session_bookmarks_idx` vector index;
+  existing bookmarks backfilled paginated/idempotently on first MCP startup.
+  `session_recall` with `query` and no `sessionId` now returns the top
+  semantically-matched bookmark across all sessions, not just the current one.
+- **`session_update`** — new tool for in-place revision of a SessionNote
+  (typo, severity, lastValidated bump, minor content correction, `aboutNodeIds`
+  resync, supersession marker). Re-embeds on content change; drops/recreates
+  `:ABOUT` edges on `aboutNodeIds` change. For substantive changes prefer
+  `session_save` with `supersededBy` set so history is preserved as a new note.
+- **`CLEAR_PROJECT_FORCE`** — internal-only Cypher query (no denylist) for
+  tests and explicit-nuke scenarios. Not exposed via the parse tool surface.
+
+### Changed (UX)
+
+- `session_recall` default `limit` 10 → 5. Pass `limit: 10` explicitly when
+  broader retrieval is needed. Reduces conversation-context bloat.
+- `session_recall` re-ranking: within similarity-sorted vector results,
+  secondary order is `lastValidated DESC, severity DESC` so fresher and more
+  critical notes surface first when scores are close. Filter-mode ordering
+  switches to `coalesce(lastValidated, createdAt) DESC, createdAt DESC`.
+- `session_recall`: query embedding is computed once per call and reused for
+  both bookmark and note semantic searches (avoids the previous double-embed).
+
+### Fixed
+
+- Latent bug where the `Project` node's status update silently no-op'd because
+  the node had been deleted by `CLEAR_PROJECT` between the upsert (status:
+  'parsing') and the post-import update (status: 'complete'). Now Project
+  metadata survives reparse and the status update lands as intended.
+
+### Migration notes
+
+- All schema additions are auto-migrated on first MCP startup after upgrade.
+  The `migrateSessionNoteProperties` and `backfillBookmarkEmbeddings` functions
+  in `src/mcp/service-init.ts` are idempotent — subsequent startups touch zero
+  rows once data is migrated.
+- No manual migration steps required. Failure of either migration is non-fatal
+  and logged.
+
 ## [3.0.0] - MCP Tool Improvements - 2026-03-17
 
 ### Breaking Changes

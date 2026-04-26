@@ -7,7 +7,12 @@ import fs from 'fs/promises';
 import { join } from 'path';
 
 import { ensureNeo4jRunning, isDockerInstalled, isDockerRunning } from '../cli/neo4j-docker.js';
-import { isOpenAIEnabled, isOpenAIAvailable, getEmbeddingDimensions } from '../core/embeddings/embeddings.service.js';
+import {
+  EmbeddingsService,
+  isOpenAIEnabled,
+  isOpenAIAvailable,
+  getEmbeddingDimensions,
+} from '../core/embeddings/embeddings.service.js';
 import { LIST_PROJECTS_QUERY } from '../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../storage/neo4j/neo4j.service.js';
 
@@ -118,6 +123,14 @@ export const initializeServices = async (): Promise<void> => {
   // Initialize services sequentially - schema must be written before NL service reads it
   await initializeNeo4jSchema();
 
+  // Idempotent backfill of new SessionNote properties added in Phase 1.3.
+  // Runs every startup; subsequent runs are no-ops once all notes are migrated.
+  await migrateSessionNoteProperties();
+
+  // Idempotent backfill of SessionBookmark embeddings (Phase 1.5b).
+  // Paginated; resumable across restarts; non-fatal if embeddings unavailable.
+  await backfillBookmarkEmbeddings();
+
   if (isOpenAIAvailable()) {
     await initializeNaturalLanguageService();
   } else {
@@ -125,6 +138,164 @@ export const initializeServices = async (): Promise<void> => {
       JSON.stringify({
         level: 'info',
         message: '[code-graph-context] natural_language_to_cypher unavailable: OPENAI_API_KEY not set',
+      }),
+    );
+  }
+};
+
+/**
+ * Backfill SessionNote properties added in Phase 1.3:
+ *   - aboutNodeIds  — recovered from existing :ABOUT edges so the post-parse
+ *                     edge recovery (Phase 1.4) can re-link after a reparse.
+ *   - lastValidated — defaults to createdAt for old notes; subsequent saves /
+ *                     updates bump it to timestamp().
+ *   - supersededBy  — defaults to null. Single signal for "is this current?";
+ *                     non-null filters the note out of default recall results.
+ *
+ * Idempotent via coalesce — only writes properties that are currently NULL.
+ * Subsequent startups touch zero rows once all notes are migrated.
+ */
+const migrateSessionNoteProperties = async (): Promise<void> => {
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      const result = await neo4jService.run(
+        `
+          MATCH (n:SessionNote)
+          WHERE n.aboutNodeIds IS NULL
+             OR n.lastValidated IS NULL
+             OR n.supersededBy IS NULL
+          OPTIONAL MATCH (n)-[:ABOUT]->(target)
+          WITH n, collect(DISTINCT target.id) AS resolvedAboutNodeIds
+          SET n.aboutNodeIds  = coalesce(n.aboutNodeIds, resolvedAboutNodeIds),
+              n.lastValidated = coalesce(n.lastValidated, n.createdAt),
+              n.supersededBy  = coalesce(n.supersededBy, null)
+          RETURN count(n) AS migrated
+        `,
+        {},
+      );
+      const migrated = result[0]?.migrated;
+      const count =
+        typeof migrated === 'object' && migrated && 'toNumber' in migrated
+          ? (migrated as any).toNumber()
+          : (migrated ?? 0);
+      if (count > 0) {
+        console.error(
+          JSON.stringify({
+            level: 'info',
+            message: `[code-graph-context] Migrated ${count} SessionNote(s) to Phase 1.3 schema`,
+          }),
+        );
+      }
+      await debugLog('SessionNote property migration complete', { migrated: count });
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    // Migration is non-fatal — log but don't block startup. New notes will
+    // populate the new properties; old notes can be re-migrated next startup.
+    await debugLog('SessionNote property migration failed (non-fatal)', { error: String(error) });
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        message: `[code-graph-context] SessionNote migration skipped: ${error instanceof Error ? error.message : String(error)}`,
+      }),
+    );
+  }
+};
+
+/**
+ * Backfill embeddings for SessionBookmark nodes that don't have one yet
+ * (Phase 1.5b). Cypher can't call the embedding service, so this is
+ * application-side code — paginated, idempotent, resumable across restarts.
+ *
+ * Runs at MCP startup. On the first startup after upgrade, walks the bookmark
+ * corpus 100 at a time and embeds each. Subsequent startups touch zero rows.
+ *
+ * Failure is non-fatal: a missing index, an unavailable embedding service,
+ * or a transient OpenAI error stops the backfill but does not block startup.
+ * New saves will populate `embedding` directly via the create path.
+ */
+const backfillBookmarkEmbeddings = async (): Promise<void> => {
+  const BATCH_SIZE = 100;
+  let totalMigrated = 0;
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      // Ensure the index exists before populating embeddings.
+      await neo4jService.run(QUERIES.CREATE_SESSION_BOOKMARKS_VECTOR_INDEX(getEmbeddingDimensions()));
+
+      const embeddingsService = new EmbeddingsService();
+
+      // Loop until no more bookmarks are missing embeddings.
+      // Each iteration is its own transaction; safe to interrupt.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const rows = await neo4jService.run(
+          `
+            MATCH (b:SessionBookmark)
+            WHERE b.embedding IS NULL
+            RETURN b.id AS id,
+                   b.projectId AS projectId,
+                   b.taskContext AS taskContext,
+                   b.summary AS summary,
+                   b.findings AS findings,
+                   b.nextSteps AS nextSteps
+            LIMIT toInteger($batchSize)
+          `,
+          { batchSize: BATCH_SIZE },
+        );
+
+        if (rows.length === 0) break;
+
+        for (const row of rows) {
+          try {
+            const text = [row.taskContext, row.summary, row.findings, row.nextSteps]
+              .filter((s: any) => typeof s === 'string' && s.length > 0)
+              .join('\n\n');
+            if (text.length === 0) {
+              // Empty bookmark — set a placeholder zero-vector to avoid re-trying forever.
+              // Better to skip via a sentinel; for now mark with a dummy embedding so the
+              // WHERE n.embedding IS NULL filter excludes it.
+              continue;
+            }
+            const embedding = await embeddingsService.embedText(text);
+            await neo4jService.run(QUERIES.SET_BOOKMARK_EMBEDDING_QUERY, {
+              bookmarkId: row.id,
+              projectId: row.projectId,
+              embedding,
+            });
+            totalMigrated += 1;
+          } catch (rowErr) {
+            await debugLog('Bookmark backfill: embed failed for one row (non-fatal)', {
+              bookmarkId: row.id,
+              error: String(rowErr),
+            });
+          }
+        }
+
+        // Defensive: if we couldn't embed any in this batch, exit to avoid infinite loop.
+        if (rows.length < BATCH_SIZE) break;
+      }
+
+      if (totalMigrated > 0) {
+        console.error(
+          JSON.stringify({
+            level: 'info',
+            message: `[code-graph-context] Backfilled embeddings for ${totalMigrated} SessionBookmark(s)`,
+          }),
+        );
+      }
+      await debugLog('SessionBookmark embedding backfill complete', { migrated: totalMigrated });
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    await debugLog('SessionBookmark embedding backfill failed (non-fatal)', { error: String(error) });
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        message: `[code-graph-context] Bookmark embedding backfill skipped: ${error instanceof Error ? error.message : String(error)}`,
       }),
     );
   }

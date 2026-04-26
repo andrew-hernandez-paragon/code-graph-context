@@ -41,6 +41,10 @@ import {
   getCrossFileEdges,
 } from '../handlers/cross-file-edge.helpers.js';
 import { GraphGeneratorHandler } from '../handlers/graph-generator.handler.js';
+import {
+  recoverSessionEdges,
+  formatSessionEdgeRecoverySummary,
+} from '../handlers/session-edge-recovery.helpers.js';
 import { StreamingImportHandler } from '../handlers/streaming-import.handler.js';
 import { jobManager } from '../services/job-manager.js';
 import { watchManager } from '../services/watch-manager.js';
@@ -332,6 +336,11 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
             result.nodesImported += configResult.nodesCreated;
             await debugLog('Config file ingestion completed', { nodesCreated: configResult.nodesCreated });
 
+            // Recreate :ABOUT/:REFERENCES/:MARKS edges from preserved session/
+            // coordination nodes (Phase 1.4). Idempotent and non-fatal.
+            const edgeRecovery = await recoverSessionEdges(neo4jService, resolvedProjectId);
+            const edgeSummary = formatSessionEdgeRecoverySummary(edgeRecovery);
+
             // Update Project node status to complete
             await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
               projectId: resolvedProjectId,
@@ -349,8 +358,9 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
                 `- Edges imported: ${result.edgesImported}\n` +
                 `- Chunks: ${result.chunksProcessed}\n` +
                 `- Time: ${(result.elapsedMs / 1000).toFixed(2)}s\n` +
-                `- Project ID: ${resolvedProjectId}\n\n` +
-                `Tip: Use "${projectName}" instead of "${resolvedProjectId}" in other tools.`,
+                `- Project ID: ${resolvedProjectId}\n` +
+                (edgeSummary ? `- ${edgeSummary}\n` : '') +
+                `\nTip: Use "${projectName}" instead of "${resolvedProjectId}" in other tools.`,
             );
           } catch (streamingError) {
             // Update Project node status to failed
@@ -426,6 +436,11 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           result.nodesImported += configResult.nodesCreated;
           await debugLog('Config file ingestion completed', { nodesCreated: configResult.nodesCreated });
 
+          // Recreate :ABOUT/:REFERENCES/:MARKS edges from preserved session/
+          // coordination nodes (Phase 1.4). Idempotent and non-fatal.
+          const edgeRecovery = await recoverSessionEdges(neo4jService, finalProjectId);
+          const edgeSummary = formatSessionEdgeRecoverySummary(edgeRecovery);
+
           // Update Project node status to complete
           await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
             projectId: finalProjectId,
@@ -461,6 +476,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
 
           return createSuccessResponse(
             formatParseSuccess(nodes.length, edges.length, result) +
+              (edgeSummary ? `\n${edgeSummary}` : '') +
               `\n\nTip: Use "${projectName}" instead of "${finalProjectId}" in other tools.` +
               watcherTip +
               watchMessage,
