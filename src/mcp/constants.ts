@@ -142,7 +142,9 @@ Auto-excludes NestJS entry points. Use filterCategory=internal-unused for action
   },
   [TOOL_NAMES.swarmPostTask]: {
     title: 'Swarm Post Task',
-    description: `Swarm orchestration tool. Post a task to the swarm queue. Use dependencies array for task ordering — tasks with incomplete deps auto-block until ready.`,
+    description: `Swarm orchestration tool. Post a task to the swarm queue. Use dependencies array for task ordering — tasks with incomplete deps auto-block until ready.
+
+Question primitive: post with type='question' to ask a synchronous question that another agent (typically the orchestrator or a domain-expert subagent) must answer before the asker proceeds. Asker polls swarm_get_tasks({ taskId }) every ~10s for up to 5 polls, then either reads the answer (status=completed; answer arrives via swarm_message with category='answer' linked to this taskId) or halts with BLOCKED.md. Set metadata.askerAgentId so the answerer knows where to direct the answer message.`,
   },
   [TOOL_NAMES.swarmClaimTask]: {
     title: 'Swarm Claim Task',
@@ -164,7 +166,9 @@ Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_ta
   },
   [TOOL_NAMES.swarmGetTasks]: {
     title: 'Swarm Get Tasks',
-    description: `Swarm orchestration tool. Query tasks with filters. Use taskId for a single task, or filter by swarmId, statuses, types, claimedBy. Add includeStats=true for aggregate counts.`,
+    description: `Swarm orchestration tool. Query tasks with filters. Use taskId for a single task, or filter by swarmId, statuses, types, claimedBy. Add includeStats=true for aggregate counts.
+
+Question polling: pass types=['question'] to find unanswered questions. Askers poll a specific question via taskId until status='completed', then read the linked answer message.`,
   },
   [TOOL_NAMES.saveSessionBookmark]: {
     title: 'Save Session Bookmark',
@@ -202,7 +206,9 @@ Flow: swarm_claim_task → do work → swarm_complete_task. Use swarm_release_ta
     title: 'Swarm Message',
     description: `Swarm coordination tool. Direct agent-to-agent messaging. Unlike pheromones (passive/decay-based), messages are explicit and delivered when agents claim tasks. Use for critical coordination signals.
 
-Actions: send (post or broadcast), read (retrieve), acknowledge (mark read). Categories: blocked, conflict, finding, request, alert, handoff.`,
+Actions: send (post or broadcast), read (retrieve), acknowledge (mark read). Categories: blocked, conflict, finding, request, alert, handoff, answer.
+
+Answer convention: when answering a type='question' task, send with category='answer', toAgentId=<askerAgentId from question metadata>, and taskId=<question taskId>. After sending, the answerer should call swarm_complete_task({ action: 'complete', taskId }) so the asker's poll sees status='completed' and reads the linked answer message.`,
   },
 } as const;
 

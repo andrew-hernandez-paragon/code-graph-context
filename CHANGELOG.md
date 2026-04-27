@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - Synchronous Cross-Agent Primitives - 2026-04-27
+
+### Added (additive — non-breaking)
+
+- **`'question'` task type** in `TASK_TYPES`. Asker posts via `swarm_post_task({ type: 'question', metadata: { askerAgentId, deadlineMs } })`, polls `swarm_get_tasks({ taskId })` until `status='completed'`, then reads the answer message. Closes the synchronous-RPC gap in mycel's stigmergic coordination.
+- **`'answer'` message category** in `MESSAGE_CATEGORIES`. Designated answerer (typically orchestrator or domain-expert subagent) sends `swarm_message({ category: 'answer', toAgentId: <askerAgentId>, taskId, content })` after claiming the question task.
+- **`QUESTION_DEFAULT_POLL_INTERVAL_MS` (10s) + `QUESTION_DEFAULT_POLL_BUDGET` (5)** constants for asker-side polling protocol. Default ~50s wait before halt-with-BLOCKED.md.
+- **Tool description updates** on `swarm_post_task`, `swarm_message`, `swarm_get_tasks` documenting the question convention (asker / answerer flow + polling cadence).
+
+### Notes
+
+- Pure additive change to enums; existing callers using `type: 'implement' | 'refactor' | ...` and existing message categories are unaffected.
+- No new tools, no schema migrations, no Neo4j changes.
+- Mycel skill (`~/.cursor/skills/mycel/SKILL.md`) and agent prompts (`~/.cursor/agents/implementer.md`, `test-writer.md`, new `peer.md`) updated in lockstep to use the primitive — see `~/develop/plans/code-graph-context/swarm-question-primitive/proposal.md` for the full design.
+
 ## [4.0.0] - Graph as Persistent Memory - 2026-04-26
 
 ### Changed (BREAKING for tooling that relies on `CLEAR_PROJECT` nuking everything)

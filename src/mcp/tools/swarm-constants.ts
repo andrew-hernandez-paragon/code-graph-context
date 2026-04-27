@@ -57,6 +57,13 @@ export type TaskPriority = keyof typeof TASK_PRIORITIES;
 
 /**
  * Task types for categorization
+ *
+ * `'question'` is the synchronous-RPC primitive: an asker posts a question
+ * task addressed to a designated answerer (typically the orchestrator or a
+ * domain-expert subagent). The answerer claims, replies via swarm_message
+ * with category='answer' linked to this taskId, then marks the task complete.
+ * The asker polls swarm_get_tasks({ taskId }) until status='completed' and
+ * reads the answer message. See QUESTION_DEFAULT_POLL_* below.
  */
 export const TASK_TYPES: readonly [string, ...string[]] = [
   'implement', // Write new code
@@ -67,9 +74,29 @@ export const TASK_TYPES: readonly [string, ...string[]] = [
   'document', // Documentation
   'investigate', // Research/explore
   'plan', // Planning/design
+  'question', // Synchronous question requiring an answer before asker proceeds
 ];
 
-export type TaskType = 'implement' | 'refactor' | 'fix' | 'test' | 'review' | 'document' | 'investigate' | 'plan';
+export type TaskType =
+  | 'implement'
+  | 'refactor'
+  | 'fix'
+  | 'test'
+  | 'review'
+  | 'document'
+  | 'investigate'
+  | 'plan'
+  | 'question';
+
+/**
+ * Default polling cadence and budget for question-type tasks. Askers poll
+ * swarm_get_tasks({ taskId }) at this interval, up to the budget, then halt
+ * with BLOCKED.md if no answer arrived. Tuned to ~50s total wait — long
+ * enough for the orchestrator to notice and claim, short enough that a
+ * stuck question fails fast rather than wedging the swarm.
+ */
+export const QUESTION_DEFAULT_POLL_INTERVAL_MS = 10_000;
+export const QUESTION_DEFAULT_POLL_BUDGET = 5;
 
 /**
  * Generate a unique task ID
@@ -119,6 +146,7 @@ export const MESSAGE_CATEGORIES = {
   request: 'Direct request to another agent',
   alert: 'Urgent notification (e.g., breaking change, test failure)',
   handoff: 'Context handoff between agents (e.g., partial work)',
+  answer: 'Answer to a question-type task (taskId required, links message to the asker)',
 } as const;
 
 export type MessageCategory = keyof typeof MESSAGE_CATEGORIES;
