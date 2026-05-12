@@ -6,6 +6,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { createCheckParseStatusTool } from './check-parse-status.tool.js';
+import { createIngestCursordiffSessionTool } from './ingest-cursordiff-session.tool.js';
+import { createListIngestCursordiffWatchersTool } from './list-ingest-cursordiff-watchers.tool.js';
+import { createStopIngestCursordiffSessionTool } from './stop-ingest-cursordiff-session.tool.js';
 import { createDetectDeadCodeTool } from './detect-dead-code.tool.js';
 import { createDetectDuplicateCodeTool } from './detect-duplicate-code.tool.js';
 import { createHelloTool } from './hello.tool.js';
@@ -86,6 +89,11 @@ export const registerAllTools = (server: McpServer): void => {
   createStartWatchProjectTool(server);
   createStopWatchProjectTool(server);
   createListWatchersTool(server);
+
+  // Register cursordiff ingestor tools
+  createIngestCursordiffSessionTool(server);
+  createStopIngestCursordiffSessionTool(server);
+  createListIngestCursordiffWatchersTool(server);
 
   // Register swarm coordination tools (pheromones for indirect coordination)
   createSwarmPheromoneTool(server);

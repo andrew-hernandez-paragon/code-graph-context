@@ -54,6 +54,9 @@ export const TOOL_NAMES = {
   sessionRecall: 'session_recall',
   sessionUpdate: 'session_update',
   querySignals: 'query_signals',
+  ingestCursordiffSession: 'ingest_cursordiff_session',
+  stopIngestCursordiffSession: 'stop_ingest_cursordiff_session',
+  listIngestCursordiffWatchers: 'list_ingest_cursordiff_watchers',
 } as const;
 
 // Tool Metadata
@@ -222,6 +225,25 @@ Multi-project: pass projectIds (array) for cross-boundary search. groupBy:'proje
 Graceful degradation: if the embedding provider is unavailable, code section returns skipped:'embedding-provider-unavailable'; notes falls back to Cypher-only (no semantic ranking) with skipped:'semantic-ranking-unavailable'; pheromones section is always available.
 
 Sources: code (vector search), notes (vector + Cypher), pheromones (intensity-ranked, query-independent).`,
+  },
+  [TOOL_NAMES.ingestCursordiffSession]: {
+    title: 'Ingest Cursordiff Session',
+    description: `Ingest cursordiff JSONL files (router / lineage / decisions) into the Neo4j graph.
+
+mode="one-shot": read all rows currently on disk, run idempotent MERGEs, return a summary.
+mode="watch":    start a live fs-watcher on the three files; new rows are ingested within ~500ms of write. Returns {watchId, paths, started} immediately. Use stop_ingest_cursordiff_session to stop.
+
+dataDir defaults to ~/.local/share/nvim/cursordiff/.
+dryRun=true plans but does not write to Neo4j (useful for smoke-testing fixtures).
+tailOnly=true (watch mode only) skips existing rows and only ingests new writes.`,
+  },
+  [TOOL_NAMES.stopIngestCursordiffSession]: {
+    title: 'Stop Ingest Cursordiff Session',
+    description: `Stop a running cursordiff fs-watch session. Provide watchId (from ingest_cursordiff_session) or dataDir. Use list_ingest_cursordiff_watchers to see active sessions.`,
+  },
+  [TOOL_NAMES.listIngestCursordiffWatchers]: {
+    title: 'List Ingest Cursordiff Watchers',
+    description: `List all active cursordiff fs-watch sessions. Returns watchId, dataDir, rowsProcessed, lastActivityAt, lastErrorAt, lastError, and isProcessing for each watcher.`,
   },
 } as const;
 
