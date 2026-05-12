@@ -87,7 +87,18 @@ export class Neo4jService {
  * To extend: add the new label here. Drift is expected to be low; the
  * denylist remains the single source of truth for "what is NOT code."
  */
-export const PRESERVED_LABELS = ['SessionNote', 'SessionBookmark', 'Pheromone', 'Project'] as const;
+export const PRESERVED_LABELS = [
+  'SessionNote',
+  'SessionBookmark',
+  'Pheromone',
+  'Project',
+  // Lineage nodes (proposal 0001-tool-call-decision-lineage). Plain labels
+  // (not prefixed) because the `source` property discriminates extractor
+  // origin ("cursordiff" | "claude") — see critic's required adjustment.
+  'ToolCall',
+  'Hunk',
+  'Decision',
+] as const;
 
 const buildLabelDenylistClause = (labels: readonly string[]): string =>
   labels.map((label) => `AND NOT n:${label}`).join(' ');
