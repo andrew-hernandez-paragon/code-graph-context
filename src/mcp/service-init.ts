@@ -229,7 +229,7 @@ const backfillBookmarkEmbeddings = async (): Promise<void> => {
 
       // Loop until no more bookmarks are missing embeddings.
       // Each iteration is its own transaction; safe to interrupt.
-      // eslint-disable-next-line no-constant-condition
+
       while (true) {
         const rows = await neo4jService.run(
           `
@@ -352,7 +352,7 @@ const initializeNeo4jSchema = async (): Promise<void> => {
     const neo4jService = new Neo4jService();
 
     // Find the most recently updated project to scope discovery queries
-    const projects = await neo4jService.run(LIST_PROJECTS_QUERY, {});
+    const projects = await neo4jService.run(LIST_PROJECTS_QUERY, { includeSynthetic: false });
     const projectId = projects.length > 0 ? (projects[0].projectId as string) : null;
 
     // Dynamically discover what's actually in the graph

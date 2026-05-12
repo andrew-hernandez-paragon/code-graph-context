@@ -49,7 +49,7 @@ export const autoResolveProjectId = async (
 
   // Auto-resolve: query all projects
   try {
-    const projects = await neo4jService.run(LIST_PROJECTS_QUERY, {});
+    const projects = await neo4jService.run(LIST_PROJECTS_QUERY, { includeSynthetic: false });
     if (projects.length === 0) {
       return {
         success: false,

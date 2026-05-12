@@ -4,6 +4,7 @@
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
 import { LIST_PROJECTS_QUERY } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
@@ -26,12 +27,18 @@ export const createListProjectsTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.listProjects].title,
       description: TOOL_METADATA[TOOL_NAMES.listProjects].description,
-      inputSchema: {},
+      inputSchema: {
+        includeSynthetic: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe('Include synthetic (non-parsed) Project nodes in the list'),
+      },
     },
-    async () => {
+    async ({ includeSynthetic = false }) => {
       const neo4jService = new Neo4jService();
       try {
-        const results = await neo4jService.run(LIST_PROJECTS_QUERY, {});
+        const results = await neo4jService.run(LIST_PROJECTS_QUERY, { includeSynthetic });
 
         if (results.length === 0) {
           return createEmptyResponse(
