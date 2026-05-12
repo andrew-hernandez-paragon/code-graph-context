@@ -12,5 +12,5 @@
     "strictNullChecks": true,  
     "skipLibCheck": true
   },
-  "include": ["src/**/*", "tools/**/*", "examples/**/*"]
+  "include": ["src/**/*", "tools/**/*"]
 }
