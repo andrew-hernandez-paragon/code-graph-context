@@ -14,7 +14,7 @@ import { generateProjectId } from '../../core/utils/project-id.js';
 
 import { mergeDecision } from './merge-decision.js';
 import { mergeHunk, mergeProduced } from './merge-hunk.js';
-import { mergeToolCall } from './merge-toolcall.js';
+import { mergeToolCall, mergeTouched } from './merge-toolcall.js';
 import { readCursordiffJsonls, RouterRow } from './read-jsonl.js';
 
 export type { CypherEmit } from './merge-toolcall.js';
@@ -84,6 +84,7 @@ export const planIngest = (opts: IngestOptions): IngestPlan => {
   const emits: ReturnType<typeof mergeToolCall>[] = [];
   const seenToolCalls = new Set<string>();
   const seenHunks = new Set<string>();
+  const seenTouched = new Set<string>();
   let syntheticCount = 0;
 
   for (const row of lineage) {
@@ -111,6 +112,18 @@ export const planIngest = (opts: IngestOptions): IngestPlan => {
       ...mergeProduced(row),
       comment: `PRODUCED: ${row.tool_call_id} → ${row.hunk_id}`,
     });
+
+    // One TOUCHED edge per unique (ToolCall, SourceFile) pair. The Cypher is a
+    // no-op when the SourceFile node doesn't exist (file outside a parsed
+    // project), so synthetic projects are handled transparently.
+    const touchedKey = `${row.tool_call_id}|${row.path}`;
+    if (!seenTouched.has(touchedKey)) {
+      emits.push({
+        ...mergeTouched(row.tool_call_id, row.path, projectId),
+        comment: `TOUCHED: ${row.tool_call_id} → ${row.path}`,
+      });
+      seenTouched.add(touchedKey);
+    }
   }
 
   // Decisions can reference hunks we haven't seen yet (shouldn't happen in

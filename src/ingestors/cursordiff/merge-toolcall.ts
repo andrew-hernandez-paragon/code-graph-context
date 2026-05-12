@@ -7,6 +7,24 @@ export interface CypherEmit {
 }
 
 /**
+ * Build the MERGE cypher for a (ToolCall)-[:TOUCHED]->(SourceFile) edge.
+ *
+ * Both MATCH clauses must succeed for the MERGE to fire — if the SourceFile
+ * node does not exist (file outside a parsed project, or project not yet
+ * ingested) the statement produces no rows and is silently a no-op.
+ * Re-running over the same inputs is idempotent because MERGE de-duplicates
+ * the edge.
+ */
+export const mergeTouched = (toolCallId: string, filePath: string, projectId: string): CypherEmit => ({
+  query: `
+    MATCH (t:ToolCall { id: $tcid })
+    MATCH (sf:SourceFile { projectId: $projectId, filePath: $filePath })
+    MERGE (t)-[:TOUCHED]->(sf)
+  `.trim(),
+  params: { tcid: toolCallId, projectId, filePath },
+});
+
+/**
  * Build the MERGE cypher for a ToolCall node.
  *
  * source="cursordiff" is the discriminator the critic flagged — the same
