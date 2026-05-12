@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { EmbeddingsService, getEmbeddingDimensions } from '../../core/embeddings/embeddings.service.js';
+import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
@@ -154,7 +155,10 @@ export const createSessionSaveTool = (server: McpServer): void => {
             'Note ID that obsoletes this one. Recall filters out notes with non-null supersededBy by default. Use to tombstone a note that has a replacement, or to mark a note as outdated without a replacement (set to any non-null value).',
           ),
         expiresInHours: z.number().optional().describe('Auto-expire note after N hours'),
-        metadata: z.string().optional().describe('Additional structured data as JSON string (bookmark only — silently ignored on note saves)'),
+        metadata: z
+          .string()
+          .optional()
+          .describe('Additional structured data as JSON string (bookmark only — silently ignored on note saves)'),
       },
     },
     async ({
@@ -184,6 +188,10 @@ export const createSessionSaveTool = (server: McpServer): void => {
         return projectResult.error;
       }
       const resolvedProjectId = projectResult.projectId;
+
+      await ensureProjectNode(neo4jService, resolvedProjectId, {
+        synthetic: isSyntheticProjectId(resolvedProjectId),
+      });
 
       // Determine effective operation mode
       const hasBookmarkFields = workingSetNodeIds != null && workingSetNodeIds.length > 0;

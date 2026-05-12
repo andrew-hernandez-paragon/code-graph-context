@@ -6,6 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
@@ -124,6 +125,10 @@ export const createSwarmPheromoneTool = (server: McpServer): void => {
         return projectResult.error;
       }
       const resolvedProjectId = projectResult.projectId;
+
+      await ensureProjectNode(neo4jService, resolvedProjectId, {
+        synthetic: isSyntheticProjectId(resolvedProjectId),
+      });
 
       try {
         // Resolve filePath to nodeId before any queries that need it

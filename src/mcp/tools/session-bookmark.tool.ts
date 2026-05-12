@@ -6,6 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import {
@@ -170,6 +171,10 @@ export const createSaveSessionBookmarkTool = (server: McpServer): void => {
         return projectResult.error;
       }
       const resolvedProjectId = projectResult.projectId;
+
+      await ensureProjectNode(neo4jService, resolvedProjectId, {
+        synthetic: isSyntheticProjectId(resolvedProjectId),
+      });
 
       try {
         const bookmarkId = `bookmark_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
