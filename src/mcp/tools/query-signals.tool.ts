@@ -323,6 +323,7 @@ interface Stats {
 }
 
 export interface QuerySignalsBySourceResponse {
+  queryId: string;
   projectIds: string[];
   query: string;
   sources: SourcesSection;
@@ -331,6 +332,7 @@ export interface QuerySignalsBySourceResponse {
 }
 
 export interface QuerySignalsByProjectResponse {
+  queryId: string;
   projectIds: string[];
   query: string;
   projects: Record<string, PerProjectSources>;
@@ -414,6 +416,16 @@ const pivotToProjectGroup = (
  * Accepts pre-resolved projectIds (resolution/error-partitioning happens in
  * the MCP wrapper). Caller is responsible for closing the Neo4j service.
  */
+/**
+ * Generate a unique query ID for a query_signals invocation.
+ * Format: qry_<epoch-ms>_<6-char-rand>
+ * Consumers pass this back via query_signals_outcome to close the feedback loop.
+ */
+const generateQueryId = (): string => {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `qry_${Date.now()}_${rand}`;
+};
+
 export const runQuerySignals = async (
   neo4jService: Neo4jService,
   input: QuerySignalsInput,
@@ -429,6 +441,7 @@ export const runQuerySignals = async (
     groupBy = 'source',
   } = input;
 
+  const queryId = generateQueryId();
   const sinceMs = parseSinceMs(since);
   const t0 = Date.now();
 
@@ -576,10 +589,10 @@ export const runQuerySignals = async (
 
   if (groupBy === 'project') {
     const projects = pivotToProjectGroup(projectIds, allSources);
-    return { projectIds, query, projects, stats };
+    return { queryId, projectIds, query, projects, stats };
   }
 
-  return { projectIds, query, sources: allSources, stats };
+  return { queryId, projectIds, query, sources: allSources, stats };
 };
 
 // ---------------------------------------------------------------------------

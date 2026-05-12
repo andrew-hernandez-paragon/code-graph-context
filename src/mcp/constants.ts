@@ -54,6 +54,7 @@ export const TOOL_NAMES = {
   sessionRecall: 'session_recall',
   sessionUpdate: 'session_update',
   querySignals: 'query_signals',
+  querySignalsOutcome: 'query_signals_outcome',
   ingestCursordiffSession: 'ingest_cursordiff_session',
   stopIngestCursordiffSession: 'stop_ingest_cursordiff_session',
   listIngestCursordiffWatchers: 'list_ingest_cursordiff_watchers',
@@ -224,7 +225,19 @@ Multi-project: pass projectIds (array) for cross-boundary search. groupBy:'proje
 
 Graceful degradation: if the embedding provider is unavailable, code section returns skipped:'embedding-provider-unavailable'; notes falls back to Cypher-only (no semantic ranking) with skipped:'semantic-ranking-unavailable'; pheromones section is always available.
 
-Sources: code (vector search), notes (vector + Cypher), pheromones (intensity-ranked, query-independent).`,
+Sources: code (vector search), notes (vector + Cypher), pheromones (intensity-ranked, query-independent).
+
+Feedback loop: the response includes a queryId. If you cite one or more results in your next response, pass that queryId and the cited result IDs to query_signals_outcome to close the ranking-feedback loop.`,
+  },
+  [TOOL_NAMES.querySignalsOutcome]: {
+    title: 'Query Signals Outcome',
+    description: `Feedback tool. Call after query_signals when you cite one or more results in your response. Records which results were actually used, enabling future ranking improvements.
+
+Pass the queryId from the query_signals response and an array of cited results (resultId + source + sourceRank). Each citation is persisted as a QueryOutcome node and linked to the underlying cited node via a CITED edge.
+
+Idempotent: calling with the same queryId + resultId twice does not double-record.
+
+citationKind: 'direct' (quoted or closely paraphrased), 'paraphrase' (restated in own words), 'background' (influenced reasoning without explicit citation). Omit if unsure.`,
   },
   [TOOL_NAMES.ingestCursordiffSession]: {
     title: 'Ingest Cursordiff Session',
