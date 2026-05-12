@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - Continuous Cursordiff Ingestion - 2026-05-11
+
+Extends the v4.2.0 lineage substrate with continuous (fs-watched) ingestion and a one-hop file-centric query path. Additive; no breaking changes.
+
+### Added — `(ToolCall)-[:TOUCHED]->(SourceFile)` edge (0006)
+
+- Cursordiff ingestor now MERGEs a `TOUCHED` edge from each ToolCall to every unique SourceFile its Hunks reference (matched on `(projectId, filePath)`).
+- Deduplicates per `(toolCallId, filePath)` so multiple hunks on the same file produce exactly one edge.
+- Silent skip when no SourceFile match exists (file outside any parsed project) — no error, no orphan edge.
+- Effect: file-centric queries (`MATCH (sf:SourceFile)<-[:TOUCHED]-(tc:ToolCall)`) are now one hop instead of `SourceFile<-Hunk<-ToolCall` traversal.
+
+### Added — `ingest_cursordiff_session` MCP tool with one-shot + fs-watch modes (0007)
+
+- **`ingest_cursordiff_session`** — exposes the cursordiff JSONL ingestor as an MCP tool. Two modes:
+  - `mode: 'one-shot'` — ingest current contents of `~/.local/share/nvim/cursordiff/{router,lineage,decisions}.jsonl`, return summary, exit.
+  - `mode: 'watch'` — start a `@parcel/watcher` subscription on the dataDir; on file change (~500ms debounce), re-run `planIngest` over the full files. Idempotent MERGE makes re-ingestion safe; byte-offset tracking is used only as a "did anything change" signal. Returns watchId + paths.
+- Optional params: `dataDir`, individual file overrides (`routerFile`, `lineageFile`, `decisionsFile`), `dryRun`, `tailOnly`.
+- Idempotent: invoking `mode: 'watch'` for a dataDir already being watched returns the existing watcher info, doesn't spawn a duplicate.
+- **`stop_ingest_cursordiff_session({ watchId | dataDir })`** — stops a watcher.
+- **`list_ingest_cursordiff_watchers()`** — returns active watchers with `mode`, `lastActivityAt`, `lastErrorAt`, `lastError`, `rowsProcessed` for operational visibility.
+- New in-memory singleton `cursordiff-watch-manager.ts` tracks watchers for the MCP server lifetime.
+
+### Notes
+
+- Watch mode is the substrate primitive that closes hyphae's continuous-aggregation gap. Combined with v4.2.0's ingestor, agent activity now flows into the graph passively as cursordiff sessions happen.
+- Claude-side telemetry parity (0005) intentionally skipped in this release — the existing claude-code tool-call data shape doesn't yet have a hook surface that produces the JSONL format the ingestor expects. Revisit when that's wired.
+
 ## [4.2.0] - Phase 1 Substrate Foundation - 2026-05-11
 
 Bundles three substrate improvements that together close the agent-action → user-decision feedback loop and add a unified cross-source query primitive. All changes additive; no breaking changes.
