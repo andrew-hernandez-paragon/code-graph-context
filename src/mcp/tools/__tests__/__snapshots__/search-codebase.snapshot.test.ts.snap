@@ -1,0 +1,91 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`projectCodeResult — shape snapshot (0009) > projects a SearchCodeRawRow to the public query_signals code result shape > projected-code-result 1`] = `
+{
+  "filePath": "src/webhooks/verify.ts",
+  "id": "node-001",
+  "name": "verifyWebhookSignature",
+  "projectId": "proj_test",
+  "score": 0.91,
+  "snippet": "function verifyWebhookSignature() { /* impl */ }",
+  "type": "Function",
+}
+`;
+
+exports[`searchCodeRaw — shape and ordering snapshot (0009) > each result row carries a projectId field (0013 multi-project) > multi-project-rows 1`] = `
+[
+  {
+    "node": {
+      "id": "node-007",
+      "labels": [
+        "Function",
+      ],
+      "properties": {
+        "filePath": "src/auth/sign.ts",
+        "id": "node-007",
+        "name": "signRequest",
+        "projectId": "proj_aaa",
+        "sourceCode": "function signRequest() { /* impl */ }",
+      },
+    },
+    "projectId": "proj_aaa",
+    "score": 0.88,
+  },
+  {
+    "node": {
+      "id": "node-008",
+      "labels": [
+        "Function",
+      ],
+      "properties": {
+        "filePath": "src/auth/verify.ts",
+        "id": "node-008",
+        "name": "verifyRequest",
+        "projectId": "proj_bbb",
+        "sourceCode": "function verifyRequest() { /* impl */ }",
+      },
+    },
+    "projectId": "proj_bbb",
+    "score": 0.79,
+  },
+  {
+    "node": {
+      "id": "node-009",
+      "labels": [
+        "Function",
+      ],
+      "properties": {
+        "filePath": "src/auth/keys.ts",
+        "id": "node-009",
+        "name": "getPublicKey",
+        "projectId": "proj_aaa",
+        "sourceCode": "function getPublicKey() { /* impl */ }",
+      },
+    },
+    "projectId": "proj_aaa",
+    "score": 0.71,
+  },
+]
+`;
+
+exports[`searchCodeRaw — shape and ordering snapshot (0009) > returns empty array when no results above threshold > empty-result 1`] = `[]`;
+
+exports[`searchCodeRaw — shape and ordering snapshot (0009) > returns rows sorted DESC by score, filtered by minSimilarity > high-relevance-row-0 1`] = `
+{
+  "node": {
+    "id": "node-001",
+    "labels": [
+      "Function",
+    ],
+    "properties": {
+      "filePath": "src/webhooks/verify.ts",
+      "id": "node-001",
+      "name": "verifyWebhookSignature",
+      "projectId": "proj_test",
+      "sourceCode": "function verifyWebhookSignature() { /* impl */ }",
+    },
+  },
+  "projectId": "proj_test",
+  "score": 0.91,
+}
+`;

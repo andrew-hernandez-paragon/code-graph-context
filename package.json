@@ -47,6 +47,7 @@
     "mcp": "node dist/mcp/mcp.server.js",
     "dev": "tsc --watch",
     "graph:print": "npm run build && node dist/utils/test.js",
+    "test": "vitest run",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "backfill:projects": "ts-node --esm scripts/backfill-project-nodes.ts"
@@ -83,6 +84,7 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.34.1",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "vitest": "^4.1.6"
   }
 }
