@@ -50,7 +50,8 @@
     "test": "vitest run",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
-    "backfill:projects": "ts-node --esm scripts/backfill-project-nodes.ts"
+    "backfill:projects": "ts-node --esm scripts/backfill-project-nodes.ts",
+    "ingest:cursordiff": "ts-node --esm src/cli/ingest-cursordiff.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
