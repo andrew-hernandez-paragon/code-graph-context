@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - Phase 1 Substrate Foundation - 2026-05-11
+
+Bundles three substrate improvements that together close the agent-action → user-decision feedback loop and add a unified cross-source query primitive. All changes additive; no breaking changes.
+
+### Added — `query_signals` MCP tool (0002 + 0008 + 0013)
+
+- **`query_signals`** — single MCP tool returning sectioned per-source results across `code`, `notes`, and `pheromones`. Replaces the three-call pattern (`search_codebase` + `session_recall` + `swarm_sense`) with one fan-out via `Promise.all`. Sectioned-per-source response, not fused — avoids the Reciprocal Rank Fusion asymmetric-universe failure mode.
+- **Multi-projectId support** — accepts `projectIds: string[]` (hard cap 25 with `pLimit(8)` concurrency gate to bound Neo4j pool use) in addition to the backwards-compat single `projectId: string`. New `groupBy: 'source' | 'project'` parameter pivots the response between flat-with-`projectId`-field and per-project-keyed structures. Partial failures across multiple projectIds partition into `unresolvedProjectIds` rather than failing the whole call.
+- **Sidecar fast-fail** — embedder health probe with 100ms timeout up front; on failure, code/notes (semantic) sections return `skipped: 'embedding-provider-unavailable'` / `skipped: 'semantic-ranking-unavailable'` immediately rather than wedging the tool for 120s.
+- **`searchCodeRaw`** — reusable helper extracted from `search-codebase` for cross-tool composition. Logic-preserving refactor (guarded by new snapshot test).
+
+### Added — ToolCall / Hunk / Decision lineage (0001)
+
+- **Three new preserved node labels**:
+  - `ToolCall { id, sessionId, projectId, source: 'cursordiff' | 'claude', toolName, model, kind, durationMs, success, ts, ... }`
+  - `Hunk { id, toolCallId, filePath, oldStart, oldCount, newStart, newCount, oldHash, newHash, ts }`
+  - `Decision { id, hunkId, outcome: 'accepted' | 'rejected' | 'edited' | 'abandoned', ts, byUser, sessionId }`
+- **Two new edges**: `(ToolCall)-[:PRODUCED]->(Hunk)`, `(Hunk)-[:RESOLVED_BY]->(Decision)`
+- **`source` discriminator property** on ToolCall — `'cursordiff' | 'claude'` — preempts schema migration when claude-side telemetry ships in a later phase.
+- **All three labels added to `PRESERVED_LABELS`** — survive reparse like SessionNote / SessionBookmark / Pheromone.
+- **`src/ingestors/cursordiff/`** — JSONL → graph ingestor reading `~/.local/share/nvim/cursordiff/{router,lineage,decisions}.jsonl` and idempotently MERGEing the three node types.
+- **`src/cli/ingest-cursordiff.ts` + `npm run ingest:cursordiff`** — one-shot CLI entry point. fs-watch live mode deferred to a later phase.
+
+### Added — Project node hygiene (0012)
+
+- **`ensureProjectNode(resolver, projectId, opts)`** — idempotent MERGE that creates a Project node for any projectId. `ON CREATE SET` populates metadata when the node is new; `ON MATCH SET` is deliberately empty so existing parsed Projects are never clobbered with synthetic metadata.
+- **Widened `validateProjectId`** — now accepts the canonical `proj_<12 hex chars>` form OR human-readable synthetic IDs like `proj_setup_hyphae` (regex `proj_<1–40 a-z0-9_-> `). Backwards-compatible: anything that previously passed still passes.
+- **`isSyntheticProjectId(id)`** predicate for distinguishing synthetic IDs (anything not matching the 12-hex canonical form).
+- **6 tool call-sites** (`session_save`, `session_note`, `session_bookmark`, `swarm_pheromone`, `swarm_post_task`, `swarm_message`) now `ensureProjectNode` between `resolveProjectIdOrError` and their writes. Closes a latent gap where `session_save` against synthetic projectIds silently failed.
+- **`list_projects` gains `includeSynthetic: boolean = false`** — synthetic Project nodes hidden by default; opt in to see them.
+- **`scripts/backfill-project-nodes.ts`** + **`npm run backfill:projects`** — one-shot retrofit script for existing graph state. Idempotent; safe to re-run.
+
+### Added — Test infrastructure (0009)
+
+- **Vitest** added as devDependency. New `npm test` script.
+- **Snapshot test for `search_codebase`** at `src/mcp/tools/__tests__/search-codebase.snapshot.test.ts` — locks response shape across the `searchCodeRaw` extraction. 11 tests pass.
+
+### Changed — internal only (no caller-visible effect)
+
+- `LIST_PROJECTS_QUERY` Cypher: `WHERE $includeSynthetic OR coalesce(p.synthetic, false) = false`. Two callers beyond `list_projects` updated to pass `includeSynthetic: false` explicitly: `autoResolveProjectId` (utils.ts) and `initializeNeo4jSchema` (service-init.ts).
+- `search-codebase.tool.ts` now consumes `searchCodeRaw` instead of inlining VECTOR_SEARCH directly.
+
+### Notes
+
+- Every change is additive. Tool input/output schemas unchanged except `list_projects` which gains an optional input.
+- Pairs with the cursordiff.nvim Lua-side journal writers (separate Neovim plugin repo) — the JSONL files this release reads are produced there.
+- The lineage pipeline (ToolCall → Hunk → Decision) is the missing closed-loop feedback signal that makes downstream queries like "which models produce hunks the user accepts vs rejects" expressible for the first time.
+
 ## [4.1.0] - Synchronous Cross-Agent Primitives - 2026-04-27
 
 ### Added (additive — non-breaking)
