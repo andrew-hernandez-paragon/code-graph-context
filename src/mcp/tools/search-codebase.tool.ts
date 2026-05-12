@@ -7,8 +7,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
-import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
+import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, DEFAULTS } from '../constants.js';
+import { searchCodeRaw } from '../handlers/query-signals.handler.js';
 import { TraversalHandler } from '../handlers/traversal.handler.js';
 import {
   createEmptyResponse,
@@ -87,47 +88,38 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
 
         const embedding = await embeddingsService.embedText(query);
 
-        const vectorResults = await neo4jService.run(QUERIES.VECTOR_SEARCH, {
-          limit: sanitizedTopK,
+        // Use searchCodeRaw (extracted helper) — logic-preserving refactor.
+        // searchCodeRaw wraps VECTOR_SEARCH_MULTI (IN $projectIds) with a
+        // defensive client-side similarity filter, matching the previous inline
+        // QUERIES.VECTOR_SEARCH call exactly for a single-project case.
+        const qualifiedResults = await searchCodeRaw(neo4jService, {
+          projectIds: [resolvedProjectId],
           embedding,
-          projectId: resolvedProjectId,
-          fetchMultiplier: 10,
+          limit: sanitizedTopK,
           minSimilarity,
+          fetchMultiplier: 10,
         });
 
-        if (vectorResults.length === 0) {
+        if (qualifiedResults.length === 0) {
           return createEmptyResponse(
             `No code found with similarity >= ${minSimilarity}`,
             'Try rephrasing your query or lowering the minSimilarity threshold.',
           );
         }
 
-        // Filter results that meet the similarity threshold
-        const qualifiedResults = vectorResults.filter((r: { score: number }) => r.score >= minSimilarity);
-
-        if (qualifiedResults.length === 0) {
-          const bestScore = vectorResults[0].score;
-          return createEmptyResponse(
-            `No sufficiently relevant code found (best match: ${bestScore.toFixed(3)}, threshold: ${minSimilarity})`,
-            'Try rephrasing your query or lowering minSimilarity.',
-          );
-        }
-
         // Best match — traverse from this node
         const bestMatch = qualifiedResults[0];
-        const nodeId = bestMatch.node.properties.id;
+        const nodeId = bestMatch.node.properties.id as string;
         const bestScore = bestMatch.score.toFixed(3);
 
         // Build alternative matches summary for the response
         const alternatives = qualifiedResults.slice(1);
-        const altLines = alternatives.map(
-          (r: { node: { properties: { id: string; name?: string; filePath?: string } }; score: number }) => {
-            const props = r.node.properties;
-            const name = props.name ?? props.id;
-            const file = props.filePath ? ` (${props.filePath})` : '';
-            return `  - ${name}${file} [score: ${r.score.toFixed(3)}, id: ${props.id}]`;
-          },
-        );
+        const altLines = alternatives.map((r) => {
+          const props = r.node.properties as { id?: string; name?: string; filePath?: string };
+          const name = props.name ?? props.id ?? r.node.id;
+          const file = props.filePath ? ` (${props.filePath})` : '';
+          return `  - ${name}${file} [score: ${r.score.toFixed(3)}, id: ${props.id ?? r.node.id}]`;
+        });
 
         const altSection =
           altLines.length > 0
