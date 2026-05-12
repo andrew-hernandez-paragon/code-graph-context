@@ -7,6 +7,11 @@ import { basename, resolve } from 'path';
 const PROJECT_ID_PREFIX = 'proj_';
 
 /**
+ * Regex for the canonical deterministic projectId form (proj_ + 12 hex chars).
+ */
+export const CANONICAL_PROJECT_ID_RE = /^proj_[a-f0-9]{12}$/;
+
+/**
  * Interface for Neo4j service (minimal interface to avoid circular deps)
  */
 export interface ProjectResolver {
@@ -35,12 +40,16 @@ export const generateProjectId = (projectPath: string): string => {
 
 /**
  * Validates that a projectId has the correct format.
+ * Accepts two forms:
+ *   - Canonical: proj_<12 lowercase hex chars>  (generated from path hash)
+ *   - Synthetic: proj_<1–40 lowercase alphanumeric/underscore/hyphen chars>
  *
  * @param projectId - The projectId to validate
  * @returns true if the projectId is valid, false otherwise
  *
  * @example
- * validateProjectId('proj_a1b2c3d4e5f6') // => true
+ * validateProjectId('proj_a1b2c3d4e5f6') // => true (canonical)
+ * validateProjectId('proj_setup_hyphae') // => true (synthetic)
  * validateProjectId('invalid') // => false
  */
 export const validateProjectId = (projectId: string): boolean => {
@@ -48,19 +57,19 @@ export const validateProjectId = (projectId: string): boolean => {
     return false;
   }
 
-  // Must start with prefix
-  if (!projectId.startsWith(PROJECT_ID_PREFIX)) {
-    return false;
-  }
+  return CANONICAL_PROJECT_ID_RE.test(projectId) || /^proj_[a-z0-9_-]{1,40}$/.test(projectId);
+};
 
-  // Must have exactly 12 hex characters after prefix
-  const hash = projectId.slice(PROJECT_ID_PREFIX.length);
-  if (hash.length !== 12) {
-    return false;
-  }
-
-  // Hash must be valid hex
-  return /^[a-f0-9]{12}$/.test(hash);
+/**
+ * Returns true if the projectId is a synthetic (non-canonical) id —
+ * i.e., it does NOT match the deterministic 12-hex canonical form.
+ *
+ * @example
+ * isSyntheticProjectId('proj_a1b2c3d4e5f6') // => false (canonical hash)
+ * isSyntheticProjectId('proj_setup_hyphae') // => true (synthetic)
+ */
+export const isSyntheticProjectId = (projectId: string): boolean => {
+  return !CANONICAL_PROJECT_ID_RE.test(projectId);
 };
 
 /**
@@ -118,6 +127,48 @@ export const getProjectName = async (projectPath: string): Promise<string> => {
 };
 
 /**
+ * Idempotent MERGE that ensures a Project node exists for a given projectId.
+ * ON CREATE SET populates metadata only when the node is newly created —
+ * ON MATCH SET is deliberately empty so parsed Project nodes are never
+ * downgraded with synthetic metadata.
+ */
+export const ENSURE_PROJECT_NODE_QUERY = `
+  MERGE (p:Project { projectId: $projectId })
+  ON CREATE SET
+    p.name = $name,
+    p.path = $path,
+    p.synthetic = $synthetic,
+    p.status = $status,
+    p.createdAt = datetime(),
+    p.updatedAt = datetime()
+  RETURN p.projectId AS projectId, coalesce(p.synthetic, false) AS synthetic
+`;
+
+/**
+ * Ensures a Project node exists for the given projectId.
+ * Safe to call against parsed projects — the empty ON MATCH SET block
+ * guarantees existing properties are never overwritten.
+ *
+ * @param resolver - Neo4j service or compatible resolver
+ * @param projectId - The projectId to ensure exists
+ * @param opts - Optional metadata for newly-created synthetic nodes
+ */
+export const ensureProjectNode = async (
+  resolver: ProjectResolver,
+  projectId: string,
+  opts?: { synthetic?: boolean; name?: string; path?: string; status?: string },
+): Promise<void> => {
+  const synthetic = opts?.synthetic ?? false;
+  await resolver.run(ENSURE_PROJECT_NODE_QUERY, {
+    projectId,
+    name: opts?.name ?? projectId,
+    path: opts?.path ?? null,
+    synthetic,
+    status: opts?.status ?? (synthetic ? 'synthetic' : null),
+  });
+};
+
+/**
  * Query to find project by name, path, or projectId
  */
 export const FIND_PROJECT_QUERY = `
@@ -152,10 +203,13 @@ export const UPDATE_PROJECT_STATUS_QUERY = `
 `;
 
 /**
- * Query to list all projects with status
+ * Query to list projects with status.
+ * Pass `$includeSynthetic = true` to include synthetic Project nodes;
+ * by default only real (non-synthetic) projects are returned.
  */
 export const LIST_PROJECTS_QUERY = `
   MATCH (p:Project)
+  WHERE $includeSynthetic OR coalesce(p.synthetic, false) = false
   RETURN p.projectId AS projectId, p.name AS name, p.path AS path,
          p.status AS status, p.nodeCount AS nodeCount, p.edgeCount AS edgeCount,
          p.updatedAt AS updatedAt
