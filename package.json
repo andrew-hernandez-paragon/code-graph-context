@@ -48,7 +48,8 @@
     "dev": "tsc --watch",
     "graph:print": "npm run build && node dist/utils/test.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "backfill:projects": "ts-node --esm scripts/backfill-project-nodes.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
