@@ -53,6 +53,7 @@ export const TOOL_NAMES = {
   sessionSave: 'session_save',
   sessionRecall: 'session_recall',
   sessionUpdate: 'session_update',
+  querySignals: 'query_signals',
 } as const;
 
 // Tool Metadata
@@ -209,6 +210,18 @@ Question polling: pass types=['question'] to find unanswered questions. Askers p
 Actions: send (post or broadcast), read (retrieve), acknowledge (mark read). Categories: blocked, conflict, finding, request, alert, handoff, answer.
 
 Answer convention: when answering a type='question' task, send with category='answer', toAgentId=<askerAgentId from question metadata>, and taskId=<question taskId>. After sending, the answerer should call swarm_complete_task({ action: 'complete', taskId }) so the asker's poll sees status='completed' and reads the linked answer message.`,
+  },
+  [TOOL_NAMES.querySignals]: {
+    title: 'Query Signals',
+    description: `Synthesis primitive. One call → sectioned results across code, notes, and pheromones for one or more projects. Replaces three separate tool calls (search_codebase + session_recall + swarm_sense) when the question is "what does the substrate know about X?"
+
+Returns per-source sections (code, notes, pheromones), each ranked by that source's native score. No cross-source fusion — the LLM decides how to weight sections.
+
+Multi-project: pass projectIds (array) for cross-boundary search. groupBy:'project' pivots response to project-keyed top-level.
+
+Graceful degradation: if the embedding provider is unavailable, code section returns skipped:'embedding-provider-unavailable'; notes falls back to Cypher-only (no semantic ranking) with skipped:'semantic-ranking-unavailable'; pheromones section is always available.
+
+Sources: code (vector search), notes (vector + Cypher), pheromones (intensity-ranked, query-independent).`,
   },
 } as const;
 
