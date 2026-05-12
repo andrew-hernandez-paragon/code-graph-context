@@ -101,6 +101,11 @@ export const PRESERVED_LABELS = [
   // Query-feedback nodes (proposal 0010-query-signals-outcome). Preserved so
   // ranking-feedback data accumulates across reparses.
   'QueryOutcome',
+  // Deliberation nodes (proposal 0004-consensus-protocol-deliberation). Preserved
+  // so panel decisions, positions, and verdicts accumulate across reparses.
+  'Deliberation',
+  'Position',
+  'Verdict',
 ] as const;
 
 const buildLabelDenylistClause = (labels: readonly string[]): string =>
