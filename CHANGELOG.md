@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - Query Outcome Instrumentation - 2026-05-11
+
+Closes the feedback loop on the query side, mirroring v4.2.0's lineage on the action side. Additive; no breaking changes.
+
+### Added — `queryId` on `query_signals` response (0010)
+
+- Every `query_signals` invocation now includes a top-level `queryId: 'qry_<...>'`. Callers pass this back via `query_signals_outcome` when citing a result, closing a ranking-feedback loop.
+
+### Added — `query_signals_outcome` MCP tool (0010)
+
+- New tool: `query_signals_outcome({ queryId, citedResults: [{ resultId, source, sourceRank, citationKind? }], agentId?, projectId? })`.
+- For each cited result, idempotently MERGEs a `QueryOutcome` node and a `CITED` edge to the underlying graph node (when resolvable across labels via the deterministic global-unique node IDs).
+- Returns `{ outcomesRecorded, queryId }`.
+
+### Added — `QueryOutcome` preserved node type (0010)
+
+- New label: `QueryOutcome { id, queryId, projectId, citedResultId, citedSource, citedSourceRank, ts, agentId?, citationKind? }`
+- New edge: `(QueryOutcome)-[:CITED]->(<cited node>)` — crosses labels using the global unique node ID system from v4.2.0.
+- Added to `PRESERVED_LABELS` — survives reparse.
+
+### Notes
+
+- The cite-detector heuristic (proposed in 0010's spec to auto-observe LLM citations) is intentionally **not** in this release. It's a harness-level concern that doesn't fit cleanly inside an MCP tool. Callers (orchestrator, hyphae, future hook) invoke `query_signals_outcome` explicitly when they observe a citation. The substrate is ready when the upstream detection lands.
+- Together with v4.2.0's Decision lineage, the substrate now captures user judgment on BOTH agent-produced hunks (Decision) and substrate-returned query results (QueryOutcome). Closed loops on both action and read paths.
+
 ## [4.3.0] - Continuous Cursordiff Ingestion - 2026-05-11
 
 Extends the v4.2.0 lineage substrate with continuous (fs-watched) ingestion and a one-hop file-centric query path. Additive; no breaking changes.
