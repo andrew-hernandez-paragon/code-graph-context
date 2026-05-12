@@ -98,6 +98,9 @@ export const PRESERVED_LABELS = [
   'ToolCall',
   'Hunk',
   'Decision',
+  // Query-feedback nodes (proposal 0010-query-signals-outcome). Preserved so
+  // ranking-feedback data accumulates across reparses.
+  'QueryOutcome',
 ] as const;
 
 const buildLabelDenylistClause = (labels: readonly string[]): string =>

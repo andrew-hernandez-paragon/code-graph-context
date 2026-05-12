@@ -17,6 +17,7 @@ import { createListProjectsTool } from './list-projects.tool.js';
 import { createListWatchersTool } from './list-watchers.tool.js';
 import { createNaturalLanguageToCypherTool } from './natural-language-to-cypher.tool.js';
 import { createParseTypescriptProjectTool } from './parse-typescript-project.tool.js';
+import { createQuerySignalsOutcomeTool } from './query-signals-outcome.tool.js';
 import { createQuerySignalsTool } from './query-signals.tool.js';
 import { createSearchCodebaseTool } from './search-codebase.tool.js';
 import { createCleanupSessionTool } from './session-cleanup.tool.js';
@@ -72,6 +73,7 @@ export const registerAllTools = (server: McpServer): void => {
   // Register core functionality tools
   createSearchCodebaseTool(server);
   createQuerySignalsTool(server);
+  createQuerySignalsOutcomeTool(server);
   createTraverseFromNodeTool(server);
   createNaturalLanguageToCypherTool(server);
   createImpactAnalysisTool(server);
