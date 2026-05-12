@@ -9,6 +9,9 @@ import { createCheckParseStatusTool } from './check-parse-status.tool.js';
 import { createIngestCursordiffSessionTool } from './ingest-cursordiff-session.tool.js';
 import { createListIngestCursordiffWatchersTool } from './list-ingest-cursordiff-watchers.tool.js';
 import { createStopIngestCursordiffSessionTool } from './stop-ingest-cursordiff-session.tool.js';
+import { createIngestDeliberateSessionTool } from './ingest-deliberate-session.tool.js';
+import { createStopIngestDeliberateSessionTool } from './stop-ingest-deliberate-session.tool.js';
+import { createListIngestDeliberateWatchersTool } from './list-ingest-deliberate-watchers.tool.js';
 import { createDetectDeadCodeTool } from './detect-dead-code.tool.js';
 import { createDetectDuplicateCodeTool } from './detect-duplicate-code.tool.js';
 import { createHelloTool } from './hello.tool.js';
@@ -96,6 +99,11 @@ export const registerAllTools = (server: McpServer): void => {
   createIngestCursordiffSessionTool(server);
   createStopIngestCursordiffSessionTool(server);
   createListIngestCursordiffWatchersTool(server);
+
+  // Register deliberation ingestor tools
+  createIngestDeliberateSessionTool(server);
+  createStopIngestDeliberateSessionTool(server);
+  createListIngestDeliberateWatchersTool(server);
 
   // Register swarm coordination tools (pheromones for indirect coordination)
   createSwarmPheromoneTool(server);

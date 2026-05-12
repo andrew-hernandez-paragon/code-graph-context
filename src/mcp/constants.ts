@@ -58,6 +58,9 @@ export const TOOL_NAMES = {
   ingestCursordiffSession: 'ingest_cursordiff_session',
   stopIngestCursordiffSession: 'stop_ingest_cursordiff_session',
   listIngestCursordiffWatchers: 'list_ingest_cursordiff_watchers',
+  ingestDeliberateSession: 'ingest_deliberate_session',
+  stopIngestDeliberateSession: 'stop_ingest_deliberate_session',
+  listIngestDeliberateWatchers: 'list_ingest_deliberate_watchers',
 } as const;
 
 // Tool Metadata
@@ -257,6 +260,25 @@ tailOnly=true (watch mode only) skips existing rows and only ingests new writes.
   [TOOL_NAMES.listIngestCursordiffWatchers]: {
     title: 'List Ingest Cursordiff Watchers',
     description: `List all active cursordiff fs-watch sessions. Returns watchId, dataDir, rowsProcessed, lastActivityAt, lastErrorAt, lastError, and isProcessing for each watcher.`,
+  },
+  [TOOL_NAMES.ingestDeliberateSession]: {
+    title: 'Ingest Deliberate Session',
+    description: `Ingest deliberation.jsonl (Deliberation / Position / Verdict events) into the Neo4j graph.
+
+mode="one-shot": read all rows currently on disk, run idempotent MERGEs, return a summary.
+mode="watch":    start a live fs-watcher on deliberation.jsonl; new rows are ingested within ~500ms of write. Returns {watchId, paths, started} immediately. Use stop_ingest_deliberate_session to stop.
+
+dataDir defaults to ~/.local/share/nvim/cursordiff/ (same dir as cursordiff JSONLs).
+dryRun=true plans but does not write to Neo4j (useful for smoke-testing fixtures).
+tailOnly=true (watch mode only) skips existing rows and only ingests new writes.`,
+  },
+  [TOOL_NAMES.stopIngestDeliberateSession]: {
+    title: 'Stop Ingest Deliberate Session',
+    description: `Stop a running deliberate fs-watch session. Provide watchId (from ingest_deliberate_session) or dataDir. Use list_ingest_deliberate_watchers to see active sessions.`,
+  },
+  [TOOL_NAMES.listIngestDeliberateWatchers]: {
+    title: 'List Ingest Deliberate Watchers',
+    description: `List all active deliberation fs-watch sessions. Returns watchId, dataDir, rowsProcessed, lastActivityAt, lastErrorAt, lastError, and isProcessing for each watcher.`,
   },
 } as const;
 
