@@ -214,7 +214,10 @@ Question polling: pass types=['question'] to find unanswered questions. Askers p
     title: 'Swarm Message',
     description: `Swarm coordination tool. Direct agent-to-agent messaging. Unlike pheromones (passive/decay-based), messages are explicit and delivered when agents claim tasks. Use for critical coordination signals.
 
-Actions: send (post or broadcast), read (retrieve), acknowledge (mark read). Categories: blocked, conflict, finding, request, alert, handoff, answer.
+Actions: send (post or broadcast), read (retrieve), acknowledge (mark read).
+
+Categories (coordination): blocked, conflict, finding, request, alert, handoff, answer.
+Categories (consensus dialogue): position, agree, dissent. Generic multi-agent consensus primitives — any protocol that needs N agents to converge on a stance can use them (current primary consumer is the /deliberate skill).
 
 Answer convention: when answering a type='question' task, send with category='answer', toAgentId=<askerAgentId from question metadata>, and taskId=<question taskId>. After sending, the answerer should call swarm_complete_task({ action: 'complete', taskId }) so the asker's poll sees status='completed' and reads the linked answer message.`,
   },

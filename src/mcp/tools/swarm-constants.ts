@@ -147,6 +147,9 @@ export const MESSAGE_CATEGORIES = {
   alert: 'Urgent notification (e.g., breaking change, test failure)',
   handoff: 'Context handoff between agents (e.g., partial work)',
   answer: 'Answer to a question-type task (taskId required, links message to the asker)',
+  position: 'Consensus primitive: this agent\'s current stance on a topic. Content is freeform or structured JSON per the consuming protocol. A subsequent `position` from the same agentId in the same swarm supersedes the prior stance by timestamp.',
+  agree: 'Consensus primitive: this agent endorses a specific stance, proposal, or emerging consensus. Content names what is being agreed to (a stance summary, a proposal id, a label). N matching agree messages from N distinct agents = convergence — the consuming protocol decides the threshold (e.g. 3-of-3 for unanimous, 2-of-3 for majority).',
+  dissent: 'Consensus primitive: this agent does NOT converge with the emerging consensus and holds its position. Content is the rationale. Any dissent typically escalates the question outside the agent panel.',
 } as const;
 
 export type MessageCategory = keyof typeof MESSAGE_CATEGORIES;

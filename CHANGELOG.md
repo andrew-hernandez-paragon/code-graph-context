@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - Consensus Dialogue Primitives - 2026-05-13
+
+Adds three substrate-pure swarm_message categories so any multi-agent consensus protocol can run open dialogue with convergence/dissent detection. Current primary consumer is the `/deliberate` skill (v5.1 swarm-mediated dialogue replaces the v5.0 Opus synthesizer arbiter), but the primitives are skill-agnostic.
+
+### Added
+
+- **`position` category** — an agent's current stance on a topic. Content is freeform or structured JSON. Subsequent `position` from the same agentId in the same swarm supersedes the prior stance by timestamp. (`src/mcp/tools/swarm-constants.ts`)
+- **`agree` category** — endorsement primitive. Content names what is being agreed to (stance summary, proposal id, label). N matching agree messages from N distinct agents = convergence; the consuming protocol picks N (unanimous, majority, etc.).
+- **`dissent` category** — non-convergence primitive. Agent holds its position; content is rationale. Triggers escalation outside the agent panel.
+
+### Why substrate, not skill
+
+These three speech acts (state-position / endorse / refuse-to-converge) are universal in multi-agent consensus literature — FIPA ACL, Paxos/Raft, Robert's Rules all encode them. Keeping them at the swarm_message layer (not buried inside `/deliberate`) means future skills (negotiation, voting, multi-agent planning) inherit them for free. The graph's SwarmMessage nodes naturally capture the full dialogue trace by swarmId.
+
+### Backward compatibility
+
+Strictly additive — existing categories and existing message shapes unchanged. Zero risk for current swarm callers.
+
 ## [5.0.1] - Embedding Health Probe Fix - 2026-05-13
 
 Fixes a latent bug where `query_signals` reported `embedding-provider-unavailable` even when a healthy embedding sidecar was listening on port 8787.
