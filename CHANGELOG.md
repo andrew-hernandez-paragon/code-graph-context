@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - Consensus Protocol & Deliberation Layer - 2026-05-11
+
+Adds the deliberation primitive: a panel of opinionated lens-prompted architects writes positions on a topic, a synthesizer merges into a verdict (FOLLOW / ITERATE / ALTERNATIVE / NEED-MORE-INPUT), and everything persists as queryable graph nodes plus optional ADR. Major version bump reflects the magnitude of the new primitive, though every change is strictly additive — no breaking changes.
+
+### Added — Deliberation / Position / Verdict preserved node types (0004)
+
+- **Three new preserved labels** survive reparse like SessionNote / SessionBookmark / Pheromone:
+  - `Deliberation { id, topic, projectIds[], mode, status, synthesisVerdict?, ts, aboutNodeIds?, triggeredBy?, sessionId? }` — `projectIds` is an array; cross-project deliberations are first-class
+  - `Position { id, deliberationId, role, ts, content, claims[], evidence[], counterArgs[], status: 'asserted' | 'abstained', agentId? }` — structured claim/evidence/counter-arg artifact (MetaGPT-style, guards against dominant-voice anchoring at synthesis)
+  - `Verdict { id, deliberationId, verdict, rationale, ts, recordedIn?, agentId? }`
+- **Edges**: `HAS_POSITION`, `RESULTED_IN`, `ABOUT { kind }`, `SCOPED_TO` (one per project — fans out for multi-project deliberations), `CITES { kind }` (cross-project safe via the global unique node ID system). Future-proofing edges defined but populated lazily: `SUPERSEDES`, `CITED_BY`, `RESPONDS_TO`, `CONTRADICTS`.
+- **Abstention as first-class output**: a panel where N-of-M roles abstain is itself a useful signal ("this question doesn't have perspective-dependent answers").
+
+### Added — Deliberation JSONL ingestor (0004)
+
+- New `src/ingestors/deliberate/` package mirroring the cursordiff ingestor shape — reads events (`deliberation-start`, `position-start`, `position-complete`, `verdict`, `deliberation-complete`) from `~/.local/share/nvim/cursordiff/deliberation.jsonl` and idempotently MERGEs Deliberation/Position/Verdict + edges.
+- Per Deliberation, calls `ensureProjectNode` for each entry in `projectIds[]` and creates SCOPED_TO edges. Per Position, emits CITES edges for any cited nodes (citations can cross projects since node IDs are globally unique).
+
+### Added — `ingest_deliberate_session` MCP tool + companions (0004)
+
+- **`ingest_deliberate_session`** — `mode: 'one-shot' | 'watch'`. Watch mode debounces ~500ms and re-runs `planIngest` over full files (idempotent MERGE makes this safe).
+- **`stop_ingest_deliberate_session`**, **`list_ingest_deliberate_watchers`** — companion lifecycle/observability tools.
+
+### Added — ADR writer (0004)
+
+- New `src/utils/adr-writer.ts` — `writeAdrIfNeeded(deliberation, verdict, decisionsDir = '~/develop/decisions/')`. Writes an ADR to `~/develop/decisions/NNNN-<slug>.md` only for `ALTERNATIVE` or `NEED-MORE-INPUT` verdicts (matches the `~/develop/CLAUDE.md` template). FOLLOW and ITERATE skip the ADR (keeps decisions/ signal-dense).
+
+### Added — `/deliberate` skill at `~/.claude/skills/deliberate/` (0004)
+
+- **`SKILL.md`** — user-invocable `/deliberate <topic>` skill. One-shot ADR mode for v1. Spawns the existing `architect` agent (`~/.claude/agents/architect.md`) three times in parallel with different lens prompts, collects structured Positions, runs a synth pass for the Verdict, persists via the new ingestor, optionally writes ADR.
+- **`roles.md`** — Pragmatist / Perfectionist / Operations lens prompts, each with anti-flip clauses (per CAMEL findings) and `ABSTAIN-NO-UNIQUE-POSITION` as a valid output. User-extensible registry.
+
+### Added — Cursordiff deliberation viewer (0011)
+
+Lives in the separate cursordiff.nvim repo (not in code-graph-context, but ships in the same release window):
+
+- New Lua module `lua/cursordiff/deliberation.lua` — fs-watches `~/.local/share/nvim/cursordiff/deliberation.jsonl` via `vim.uv.new_fs_event()`, renders incoming events into a floating window.
+- **Jury-dashboard layout** for one-shot deliberations — vertical stack of role cards updating in place as positions complete; synthesis card lights up last.
+- `:CursorDiffDeliberation [id]` user command. Auto-opens on `deliberation-start` (configurable). Dismissible with `q`.
+- macOS fs-watch handles file-doesn't-exist-yet (2-second retry timer until first `/deliberate` run creates the file) and unreliable filename argument from kqueue.
+
+### Breaking changes
+
+None. Major bump reflects scope, not compatibility.
+
+### Why this matters
+
+The deliberation layer closes a quality loop on the *reasoning process*, mirroring how v4.2.0's lineage closes the loop on agent *output*. Combined with v4.4.0's QueryOutcome, the substrate now captures user judgment on three independent axes:
+- Agent-produced hunks → Decision (v4.2.0)
+- Query result citations → QueryOutcome (v4.4.0)
+- Multi-perspective architectural decisions → Verdict + Position (this release)
+
+Each is queryable, each is a closed feedback loop, each compounds with the others. Cross-project deliberations are first-class through `projectIds[]` and `SCOPED_TO` fan-out.
+
+### Notes
+
+- Mandatory baseline comparison (single-agent four-lens self-critique vs multi-agent panel) noted in the proposal is **deferred** — recommended follow-up evaluation work, not blocking ship.
+- Rounds mode (`--rounds N` back-and-forth dialogue) and auto-fire on `architect-ALTERNATIVE` are v2.
+
 ## [4.4.0] - Query Outcome Instrumentation - 2026-05-11
 
 Closes the feedback loop on the query side, mirroring v4.2.0's lineage on the action side. Additive; no breaking changes.
