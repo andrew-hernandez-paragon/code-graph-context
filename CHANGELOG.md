@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] - Embedding Health Probe Fix - 2026-05-13
+
+Fixes a latent bug where `query_signals` reported `embedding-provider-unavailable` even when a healthy embedding sidecar was listening on port 8787.
+
+### Fixed
+
+- **`probeEmbeddingsHealth` no longer short-circuits on `sidecar.isRunning`.** That flag is process-local (only true when the current MCP generation spawned the sidecar itself) and misreports externally-started or cross-generation sidecars. The probe now goes straight to the network `/health` endpoint; the 100ms timeout still provides wedge-prevention against a cold-loading sidecar that hasn't bound the port yet.
+- **Symptom:** `query_signals` returned `code: { skipped: 'embedding-provider-unavailable' }` and `notes: { skipped: 'semantic-ranking-unavailable' }` despite `search_codebase` (which uses a different code path) returning vector results from the same sidecar. After fix, both `search_codebase` and `query_signals` see the same sidecar state.
+- File: `src/mcp/handlers/query-signals.handler.ts`.
+
 ## [5.0.0] - Consensus Protocol & Deliberation Layer - 2026-05-11
 
 Adds the deliberation primitive: a panel of opinionated lens-prompted architects writes positions on a topic, a synthesizer merges into a verdict (FOLLOW / ITERATE / ALTERNATIVE / NEED-MORE-INPUT), and everything persists as queryable graph nodes plus optional ADR. Major version bump reflects the magnitude of the new primitive, though every change is strictly additive — no breaking changes.

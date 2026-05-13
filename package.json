@@ -1,6 +1,6 @@
 {
   "name": "code-graph-context",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "MCP server that builds code graphs to provide rich context to LLMs",
   "type": "module",
   "homepage": "https://github.com/andrew-hernandez-paragon/code-graph-context#readme",

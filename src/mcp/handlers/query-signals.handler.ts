@@ -151,6 +151,12 @@ export const projectCodeResult = (
  *   (no network round-trip — key presence is a sufficient liveness signal).
  * - Local sidecar path: fires a single GET /health against the sidecar with a
  *   100ms AbortController timeout. Returns false on any error or timeout.
+ *   The 100ms timeout is the wedge-prevention: a healthy sidecar replies in
+ *   ~40ms; anything slower means it's still loading and would block embed
+ *   calls for ~120s. We do NOT check `sidecar.isRunning` first — that flag
+ *   is process-local (only true when this MCP generation spawned the sidecar
+ *   itself) and lies when the sidecar was started externally or by a prior
+ *   MCP generation. Trust the network: if /health says 200, it's up.
  *
  * Called once per `query_signals` invocation before touching the embedder.
  * On false: code section returns `skipped: 'embedding-provider-unavailable'`;
@@ -163,14 +169,11 @@ export const probeEmbeddingsHealth = async (timeoutMs = 100): Promise<boolean> =
     return isOpenAIAvailable();
   }
 
-  // Local sidecar path — check if the sidecar is already running without
-  // triggering the 120-second auto-start sequence.
+  // Local sidecar path — probe the network endpoint directly. Do NOT short-
+  // circuit on `sidecar.isRunning`; that flag misreports externally-started
+  // sidecars. The 100ms timeout still prevents blocking on a cold-loading
+  // sidecar that hasn't bound the port yet.
   const sidecar = getEmbeddingSidecar();
-  if (!sidecar.isRunning) {
-    // Don't auto-start — that's the 120s wedge we're avoiding.
-    return false;
-  }
-
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
