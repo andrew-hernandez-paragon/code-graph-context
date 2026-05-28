@@ -71,7 +71,7 @@ export const isDockerRunning = (): boolean => exec('docker info') !== null;
  * Get container status
  */
 export const getContainerStatus = (containerName: string = NEO4J_CONFIG.containerName): ContainerStatus => {
-  const result = exec(`docker inspect --format='{{.State.Running}}' ${containerName} 2>/dev/null`);
+  const result = exec(`docker inspect --format={{.State.Running}} ${containerName}`);
   if (result === null) return 'not-found';
   return result === 'true' ? 'running' : 'stopped';
 };
@@ -134,7 +134,7 @@ export const isNeo4jReady = (
   containerName: string = NEO4J_CONFIG.containerName,
   password: string = NEO4J_CONFIG.defaultPassword,
 ): boolean => {
-  const result = exec(`docker exec ${containerName} cypher-shell -u neo4j -p ${password} "RETURN 1" 2>/dev/null`);
+  const result = exec(`docker exec ${containerName} cypher-shell -u neo4j -p ${password} "RETURN 1"`);
   return result !== null;
 };
 
@@ -146,7 +146,7 @@ export const isApocAvailable = (
   password = NEO4J_CONFIG.defaultPassword,
 ): boolean => {
   const result = exec(
-    `docker exec ${containerName} cypher-shell -u neo4j -p ${password} "CALL apoc.help('apoc') YIELD name RETURN count(name)" 2>/dev/null`,
+    `docker exec ${containerName} cypher-shell -u neo4j -p ${password} "CALL apoc.help('apoc') YIELD name RETURN count(name)"`,
   );
   return result !== null && !result.includes('error');
 };
