@@ -110,12 +110,17 @@ export class EmbeddingSidecar {
   }
 
   /**
-   * Resolve the python binary — prefer venv, fall back to system python3.
+   * Resolve the python binary — prefer PYTHON_EXECUTABLE env var, then venv,
+   * then fall back to system python. Handles Windows vs POSIX paths correctly.
    */
   private resolvePython(sidecarDir: string): string {
-    const venvPython = join(sidecarDir, '.venv', 'bin', 'python3');
+    if (process.env.PYTHON_EXECUTABLE) return process.env.PYTHON_EXECUTABLE;
+    const isWindows = process.platform === 'win32';
+    const venvPython = isWindows
+      ? join(sidecarDir, '.venv', 'Scripts', 'python.exe')
+      : join(sidecarDir, '.venv', 'bin', 'python3');
     if (existsSync(venvPython)) return venvPython;
-    return 'python3';
+    return isWindows ? 'python' : 'python3';
   }
 
   private async doStart(): Promise<void> {
@@ -196,8 +201,10 @@ export class EmbeddingSidecar {
   }
 
   private async verifyPython(): Promise<void> {
+    const sidecarDir = join(__dirname, '..', '..', '..', 'sidecar');
+    const python = this.resolvePython(sidecarDir);
     return new Promise<void>((resolve, reject) => {
-      const check = spawn('python3', ['--version'], { stdio: 'pipe' });
+      const check = spawn(python, ['--version'], { stdio: 'pipe' });
       let output = '';
       check.stdout?.on('data', (d: Buffer) => (output += d.toString()));
       check.stderr?.on('data', (d: Buffer) => (output += d.toString()));
