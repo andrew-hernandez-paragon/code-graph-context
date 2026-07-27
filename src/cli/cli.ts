@@ -8,7 +8,7 @@
 import { execSync, spawn as spawnProcess } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 import { Command } from 'commander';
 
@@ -578,7 +578,10 @@ const startMcpServer = async (): Promise<void> => {
   // The MCP server is in a sibling directory after build
   // cli/cli.js -> mcp/mcp.server.js
   const mcpPath = join(__dirname, '..', 'mcp', 'mcp.server.js');
-  await import(mcpPath);
+  // Windows: the ESM loader rejects raw drive-letter paths (C:\...) with
+  // ERR_UNSUPPORTED_ESM_URL_SCHEME — must be a file:// URL. pathToFileURL()
+  // is a no-op passthrough to a valid file:// URL on POSIX paths.
+  await import(pathToFileURL(mcpPath).href);
 };
 
 /**
