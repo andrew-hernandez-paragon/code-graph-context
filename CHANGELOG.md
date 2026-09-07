@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - Hybrid Code Search - 2026-09-07
+
+`search_codebase` gains a BM25 keyword channel alongside the existing vector channel, fused by reciprocal rank. Vector-only retrieval cannot rank exact symbol names: cosine scores for symbols sharing a name stem sit inside a band a fraction of a point wide, so the exact match lands mid-pack and the graph traversal roots on the wrong node.
+
+### Added
+
+- **`code_fts_idx`** - a Neo4j FULLTEXT index on `:Embedded(name, sourceCode)`, covering the same nodes `embedded_nodes_idx` does. Both properties are already written at parse time, so this needs no ingest change, and Neo4j backfills the index from existing nodes when it is created. (`src/storage/neo4j/neo4j.service.ts`)
+- **`searchCodeLexical`** - the BM25 channel. No `minSimilarity` gate: Lucene scores are unbounded and relative to the corpus, so an absolute floor means nothing across projects. The channel is capped by rank instead. (`src/mcp/handlers/query-signals.handler.ts`)
+- **`buildLuceneQuery`** - escapes every Lucene reserved character, drops tokens with no letter or digit, caps term count at 32, and boosts the `name` field 3x over `sourceCode`. A query like `what does foo() do?` is matched literally instead of being parsed as grouping and wildcards.
+- **`fuseRRF`** - reciprocal rank fusion, `1/(60 + rank)` per channel. Rank rather than raw score, because cosine is bounded 0..1 while BM25 is unbounded: the two orderings are comparable, the two scales are not.
+- **`searchCodeHybrid`** - runs both channels in parallel, fuses, cuts to `topK`. Each channel is asked for a deeper pool than `topK` so fusion has something to reorder.
+
+### Changed
+
+- **`search_codebase` ranks on the fused score.** Result lines now report `rrf`, plus `vec` and `bm25` where each channel contributed, so a caller can see whether a result came from meaning, from keywords, or from both.
+
+### Measured
+
+Query `searchCodeRaw` against this repository's own graph:
+
+| | rank of the exact function | score of #1 | gap to #2 |
+|---|---|---|---|
+| vector only | 3rd | 0.855 | 0.001 |
+| BM25, name boosted | 1st | 19.52 | 7.2x |
+
+The vector top five spanned 0.841 to 0.855, a band 0.014 wide. Plain-English queries go the other way, which is why this fuses the channels rather than replacing one with the other.
+
+### Upgrading
+
+No reparse and no re-embed. The index is created at MCP server startup by `ensureCodeFulltextIndex` (`src/mcp/service-init.ts`), and by `GraphGeneratorHandler.ensureIndexes` on the next parse. Creation is idempotent and non-fatal: if the index is absent, `searchCodeLexical` returns no rows and search degrades to vector-only rather than erroring.
+
+### Known limitation
+
+Neo4j ships no camelCase-splitting analyzer, so `searchCodeRaw` indexes as a single token. Querying that identifier as separate words (`search code raw`) does not hit it lexically. That query shape is what the vector channel answers, so the fused result is still correct.
+
 ## [5.1.0] - Consensus Dialogue Primitives - 2026-05-13
 
 Adds three substrate-pure swarm_message categories so any multi-agent consensus protocol can run open dialogue with convergence/dissent detection. Current primary consumer is the `/deliberate` skill (v5.1 swarm-mediated dialogue replaces the v5.0 Opus synthesizer arbiter), but the primitives are skill-agnostic.

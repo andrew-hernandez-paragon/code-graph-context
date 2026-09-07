@@ -204,6 +204,23 @@ export const QUERIES = {
   }}
 `,
 
+  // Lexical companion to embedded_nodes_idx. Covers the same :Embedded nodes
+  // over two properties already written at parse time, so it needs no ingest
+  // change and Neo4j backfills it from existing nodes when it is created.
+  //
+  // standard-no-stop-words rather than standard: code queries legitimately
+  // contain `if`, `for` and `return`, and a stop-word filter would drop them.
+  // Neo4j ships no camelCase-splitting analyzer, so `searchCodeRaw` indexes as
+  // a single token. Exact identifier queries hit; the same identifier typed as
+  // separate words does not, which is what the vector channel is for.
+  CREATE_EMBEDDED_FULLTEXT_INDEX: `
+  CREATE FULLTEXT INDEX code_fts_idx IF NOT EXISTS
+  FOR (n:Embedded) ON EACH [n.name, n.sourceCode]
+  OPTIONS {indexConfig: {
+    \`fulltext.analyzer\`: 'standard-no-stop-words'
+  }}
+`,
+
   CREATE_SESSION_NOTES_VECTOR_INDEX: (dimensions: number) => `
   CREATE VECTOR INDEX session_notes_idx IF NOT EXISTS
   FOR (n:SessionNote) ON (n.embedding)

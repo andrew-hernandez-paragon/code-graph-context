@@ -131,6 +131,12 @@ export const initializeServices = async (): Promise<void> => {
   // Paginated; resumable across restarts; non-fatal if embeddings unavailable.
   await backfillBookmarkEmbeddings();
 
+  // Idempotent creation of the BM25 index behind hybrid code search (0014).
+  // Runs every startup so an existing graph gains the lexical channel on
+  // upgrade; Neo4j backfills it from the :Embedded nodes already stored, so
+  // no reparse and no re-embed is needed.
+  await ensureCodeFulltextIndex();
+
   if (isOpenAIAvailable()) {
     await initializeNaturalLanguageService();
   } else {
@@ -201,6 +207,30 @@ const migrateSessionNoteProperties = async (): Promise<void> => {
         message: `[code-graph-context] SessionNote migration skipped: ${error instanceof Error ? error.message : String(error)}`,
       }),
     );
+  }
+};
+
+/**
+ * Create the code fulltext index if it is not already there (0014).
+ *
+ * Separate from GraphGeneratorHandler.ensureIndexes, which only runs on parse:
+ * an existing user upgrading gets the lexical channel on the next server start
+ * without having to reparse anything.
+ *
+ * Failure is non-fatal. searchCodeLexical returns [] when the index is missing,
+ * so search falls back to vector-only rather than erroring.
+ */
+const ensureCodeFulltextIndex = async (): Promise<void> => {
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      await neo4jService.run(QUERIES.CREATE_EMBEDDED_FULLTEXT_INDEX);
+      await debugLog('Code fulltext index ensured');
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    await debugLog('Failed to ensure code fulltext index', error);
   }
 };
 

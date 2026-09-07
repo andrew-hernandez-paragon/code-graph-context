@@ -188,6 +188,7 @@ export class GraphGeneratorHandler {
   async ensureIndexes(): Promise<void> {
     await this.createProjectIndexes();
     await this.createVectorIndexes();
+    await this.createFulltextIndexes();
   }
 
   private async loadGraphData(graphJsonPath: string): Promise<GraphData> {
@@ -360,6 +361,11 @@ export class GraphGeneratorHandler {
     await this.neo4jService.run(QUERIES.CREATE_EMBEDDED_VECTOR_INDEX(dims));
     await this.neo4jService.run(QUERIES.CREATE_SESSION_NOTES_VECTOR_INDEX(dims));
     await debugLog('Vector indexes created', { dimensions: dims });
+  }
+
+  private async createFulltextIndexes(): Promise<void> {
+    await this.neo4jService.run(QUERIES.CREATE_EMBEDDED_FULLTEXT_INDEX);
+    await debugLog('Fulltext indexes created');
   }
 
   private flattenProperties(properties: any): any {

@@ -1,6 +1,7 @@
 /**
  * Search Codebase Tool
- * Semantic search using vector embeddings to find relevant code
+ * Hybrid search over the code graph: vector embeddings and BM25, fused by
+ * reciprocal rank, then a dependency traversal from the top result.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -9,7 +10,7 @@ import { z } from 'zod';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, DEFAULTS } from '../constants.js';
-import { searchCodeRaw } from '../handlers/query-signals.handler.js';
+import { searchCodeHybrid, type FusedSearchRow } from '../handlers/query-signals.handler.js';
 import { TraversalHandler } from '../handlers/traversal.handler.js';
 import {
   createEmptyResponse,
@@ -18,6 +19,17 @@ import {
   sanitizeNumericInput,
   resolveProjectIdOrError,
 } from '../utils.js';
+
+/**
+ * Render the fused score plus whichever channel scores contributed, so a caller
+ * can see whether a result came from meaning, from keywords, or from both.
+ */
+const formatFusedScore = (row: FusedSearchRow): string => {
+  const parts = [`rrf: ${row.fusedScore.toFixed(4)}`];
+  if (row.vectorScore !== null) parts.push(`vec: ${row.vectorScore.toFixed(3)}`);
+  if (row.lexicalScore !== null) parts.push(`bm25: ${row.lexicalScore.toFixed(2)}`);
+  return parts.join(', ');
+};
 
 export const createSearchCodebaseTool = (server: McpServer): void => {
   server.registerTool(
@@ -88,12 +100,13 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
 
         const embedding = await embeddingsService.embedText(query);
 
-        // Use searchCodeRaw (extracted helper) — logic-preserving refactor.
-        // searchCodeRaw wraps VECTOR_SEARCH_MULTI (IN $projectIds) with a
-        // defensive client-side similarity filter, matching the previous inline
-        // QUERIES.VECTOR_SEARCH call exactly for a single-project case.
-        const qualifiedResults = await searchCodeRaw(neo4jService, {
+        // Hybrid: vector and BM25 in parallel, fused by reciprocal rank (0014).
+        // minSimilarity still gates the vector channel only. A node the lexical
+        // channel found is judged on its rank, because BM25 scores are unbounded
+        // and have no comparable floor.
+        const qualifiedResults = await searchCodeHybrid(neo4jService, {
           projectIds: [resolvedProjectId],
+          query,
           embedding,
           limit: sanitizedTopK,
           minSimilarity,
@@ -102,7 +115,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
 
         if (qualifiedResults.length === 0) {
           return createEmptyResponse(
-            `No code found with similarity >= ${minSimilarity}`,
+            `No code matched, by embedding similarity >= ${minSimilarity} or by keyword`,
             'Try rephrasing your query or lowering the minSimilarity threshold.',
           );
         }
@@ -110,7 +123,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
         // Best match — traverse from this node
         const bestMatch = qualifiedResults[0];
         const nodeId = bestMatch.node.properties.id as string;
-        const bestScore = bestMatch.score.toFixed(3);
+        const bestScore = formatFusedScore(bestMatch);
 
         // Build alternative matches summary for the response
         const alternatives = qualifiedResults.slice(1);
@@ -118,7 +131,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           const props = r.node.properties as { id?: string; name?: string; filePath?: string };
           const name = props.name ?? props.id ?? r.node.id;
           const file = props.filePath ? ` (${props.filePath})` : '';
-          return `  - ${name}${file} [score: ${r.score.toFixed(3)}, id: ${props.id ?? r.node.id}]`;
+          return `  - ${name}${file} [${formatFusedScore(r)}, id: ${props.id ?? r.node.id}]`;
         });
 
         const altSection =
