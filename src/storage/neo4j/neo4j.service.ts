@@ -565,19 +565,29 @@ export const QUERIES = {
 
       // Filter: skip already visited nodes and ensure same project
       WHERE NOT neighbor.id IN $visitedNodeIds AND neighbor.projectId = $projectId
+        AND ($relationshipTypes IS NULL OR type(rel) IN $relationshipTypes)
+
+      WITH source, neighbor, rel,
+           CASE
+             WHEN neighbor.embedding IS NULL OR $queryEmbedding IS NULL THEN 'missing'
+             WHEN size(neighbor.embedding) <> size($queryEmbedding) THEN 'dimension_mismatch'
+             WHEN size(neighbor.embedding) = 0
+               OR none(value IN neighbor.embedding WHERE value <> 0)
+               OR none(value IN $queryEmbedding WHERE value <> 0) THEN 'zero_vector'
+             ELSE 'compatible'
+           END AS embeddingStatus
 
       // Calculate the three scoring components
-      WITH source, neighbor, rel,
+      WITH source, neighbor, rel, embeddingStatus,
 
            // 1. Edge weight: how important is this relationship type?
            //    Falls back to 0.5 if not set
            COALESCE(rel.relationshipWeight, 0.5) AS edgeWeight,
 
            // 2. Node similarity: how relevant is this node to the query?
-           //    Uses cosine similarity if neighbor has an embedding
-           //    Falls back to 0.5 if no embedding (structural nodes like decorators)
+           // Incompatible vectors retain the same structural weight as missing embeddings.
            CASE
-             WHEN neighbor.embedding IS NOT NULL AND $queryEmbedding IS NOT NULL
+             WHEN embeddingStatus = 'compatible'
              THEN vector.similarity.cosine(neighbor.embedding, $queryEmbedding)
              ELSE 0.5
            END AS nodeSimilarity,
@@ -590,7 +600,7 @@ export const QUERIES = {
            ($depthDecay ^ ($currentDepth - 1)) AS depthPenalty
 
       // Combine into final score
-      WITH source, neighbor, rel, edgeWeight, nodeSimilarity, depthPenalty,
+      WITH source, neighbor, rel, embeddingStatus, edgeWeight, nodeSimilarity, depthPenalty,
            (edgeWeight * nodeSimilarity * depthPenalty) AS combinedScore
 
       // Return all neighbor data with scores
@@ -608,6 +618,7 @@ export const QUERIES = {
         },
         sourceNodeId: source.id,
         scoring: {
+          embeddingStatus: embeddingStatus,
           edgeWeight: edgeWeight,
           nodeSimilarity: nodeSimilarity,
           depthPenalty: depthPenalty,
@@ -727,6 +738,40 @@ export const QUERIES = {
       dependent.filePath AS filePath,
       type(r) AS relationshipType,
       coalesce(r.relationshipWeight, 0.5) AS weight
+  `,
+
+  GET_FILE_NODE_IDS: `
+    MATCH (n)
+    WHERE n.projectId = $projectId AND n.filePath = $filePath
+      AND n.coreType IS NOT NULL
+    RETURN n.id AS nodeId
+  `,
+
+  GET_NODES_IMPACT: `
+    MATCH (target) WHERE target.id IN $nodeIds AND target.projectId = $projectId
+    MATCH (dependent)-[r]->(target)
+    WHERE dependent.projectId = $projectId AND dependent.coreType IS NOT NULL
+      AND NOT dependent.id IN $nodeIds
+      AND ($excludedFilePath IS NULL OR dependent.filePath IS NULL OR dependent.filePath <> $excludedFilePath)
+    RETURN DISTINCT dependent.id AS nodeId, dependent.name AS name, labels(dependent) AS labels,
+      dependent.semanticType AS semanticType, dependent.coreType AS coreType,
+      dependent.filePath AS filePath, type(r) AS relationshipType,
+      coalesce(r.relationshipWeight, 0.5) AS weight,
+      target.id AS targetNodeId, target.name AS targetNodeName,
+      coalesce(target.semanticType, target.coreType, labels(target)[0]) AS targetNodeType
+  `,
+
+  GET_NODES_TRANSITIVE_DEPENDENTS: (maxDepth: number = 4) => `
+    MATCH (target) WHERE target.id IN $nodeIds AND target.projectId = $projectId
+    MATCH path = (dependent)-[*2..${maxDepth}]->(target)
+    WHERE dependent.projectId = $projectId AND all(n IN nodes(path) WHERE n.projectId = $projectId AND n.coreType IS NOT NULL)
+      AND NOT dependent.id IN $nodeIds
+      AND ($excludedFilePath IS NULL OR dependent.filePath IS NULL OR dependent.filePath <> $excludedFilePath)
+    RETURN DISTINCT dependent.id AS nodeId, dependent.name AS name, labels(dependent) AS labels,
+      dependent.semanticType AS semanticType, dependent.coreType AS coreType,
+      dependent.filePath AS filePath, length(path) AS depth,
+      [r IN relationships(path) | type(r)] AS relationshipPath
+    ORDER BY depth ASC
   `,
 
   /**

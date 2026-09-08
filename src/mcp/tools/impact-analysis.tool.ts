@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { TraversalHandler } from '../handlers/traversal.handler.js';
 import { createErrorResponse, createSuccessResponse, debugLog, resolveProjectIdOrError } from '../utils.js';
 
 /**
@@ -68,6 +69,9 @@ interface Dependent {
   weight: number;
   depth?: number;
   relationshipPath?: string[];
+  targetNodeId?: string;
+  targetNodeName?: string;
+  targetNodeType?: string;
 }
 
 export const createImpactAnalysisTool = (server: McpServer): void => {
@@ -85,7 +89,7 @@ export const createImpactAnalysisTool = (server: McpServer): void => {
         filePath: z
           .string()
           .optional()
-          .describe('Alternatively, provide a file path to analyze all exports from that file'),
+          .describe('Alternatively, analyze all indexed code in a file and its external dependents'),
         maxDepth: z
           .number()
           .int()
@@ -116,104 +120,64 @@ export const createImpactAnalysisTool = (server: McpServer): void => {
         const highRiskTypes = new Set(frameworkConfig?.highRiskTypes ?? []);
 
         let targetInfo: { id: string; name: string; type: string; filePath: string };
-        let directDependents: Dependent[];
+        let targetNodeIds: string[];
+        const scope = nodeId ? 'node' : 'file';
 
-        if (nodeId) {
-          // Get target node info
-          const targetResult = await neo4jService.run(QUERIES.GET_NODE_BY_ID, { nodeId, projectId: resolvedProjectId });
-          if (targetResult.length === 0) {
-            return createErrorResponse(`Node with ID "${nodeId}" not found in project "${resolvedProjectId}"`);
-          }
-          const target = targetResult[0];
-          targetInfo = {
-            id: target.id,
-            name: target.name ?? 'Unknown',
-            type: target.semanticType ?? target.coreType ?? target.labels?.[0] ?? 'Unknown',
-            filePath: target.filePath ?? '',
-          };
-
-          // Get direct dependents using cross-file edge pattern
-          const directResult = await neo4jService.run(QUERIES.GET_NODE_IMPACT, {
-            nodeId,
+        const targetId =
+          nodeId ?? (await new TraversalHandler(neo4jService).resolveNodeIdFromFilePath(filePath!, resolvedProjectId));
+        if (!targetId) {
+          return createErrorResponse(
+            `File "${filePath}" is not indexed in project "${resolvedProjectId}". Impact is unknown. Check the indexed repository path and read current source; update the index before relying on graph coverage.`,
+          );
+        }
+        const targetResult = await neo4jService.run(QUERIES.GET_NODE_BY_ID, {
+          nodeId: targetId,
+          projectId: resolvedProjectId,
+        });
+        if (targetResult.length === 0) {
+          return createErrorResponse(
+            `Node with ID "${targetId}" not found in project "${resolvedProjectId}". Impact is unknown.`,
+          );
+        }
+        const target = targetResult[0];
+        targetInfo = {
+          id: target.id,
+          name: target.name ?? 'Unknown',
+          type:
+            scope === 'file'
+              ? 'SourceFile'
+              : (target.semanticType ?? target.coreType ?? target.labels?.[0] ?? 'Unknown'),
+          filePath: target.filePath ?? '',
+        };
+        if (scope === 'file') {
+          const entities = await neo4jService.run(QUERIES.GET_FILE_NODE_IDS, {
+            filePath: targetInfo.filePath,
             projectId: resolvedProjectId,
           });
-          directDependents = normalizeDependents(directResult);
+          targetNodeIds = [...new Set([targetId, ...entities.map((entity) => entity.nodeId as string)])];
         } else {
-          // File-based analysis - find all Class/Function/Interface entities in the file
-          // and aggregate their impact analysis results
-          const entitiesQuery = `
-            MATCH (n)
-            WHERE n.projectId = $projectId
-              AND (n.filePath = $filePath OR n.filePath ENDS WITH '/' + $filePath)
-              AND (n:Class OR n:Function OR n:Interface)
-            RETURN n.id AS nodeId, n.name AS name, labels(n) AS labels,
-                   n.semanticType AS semanticType, n.coreType AS coreType
-          `;
-
-          const entities = await neo4jService.run(entitiesQuery, {
-            filePath,
-            projectId: resolvedProjectId,
-          });
-
-          if (entities.length === 0) {
-            // No exportable entities found
-            targetInfo = {
-              id: filePath!,
-              name: filePath!.split('/').pop() ?? filePath!,
-              type: 'SourceFile',
-              filePath: filePath!,
-            };
-            directDependents = [];
-          } else {
-            // Use first entity as the primary target for display
-            const primaryEntity = entities[0];
-            targetInfo = {
-              id: primaryEntity.nodeId as string,
-              name: (primaryEntity.name as string) ?? filePath!.split('/').pop() ?? filePath!,
-              type: (primaryEntity.semanticType as string) ?? (primaryEntity.coreType as string) ?? 'Class',
-              filePath: filePath!,
-            };
-
-            // Aggregate impact from all entities in the file
-            const allDependentsMap = new Map<string, Dependent>();
-
-            for (const entity of entities) {
-              const entityResult = await neo4jService.run(QUERIES.GET_NODE_IMPACT, {
-                nodeId: entity.nodeId,
-                projectId: resolvedProjectId,
-              });
-
-              for (const dep of normalizeDependents(entityResult)) {
-                // Dedupe by nodeId, keeping highest weight
-                const existing = allDependentsMap.get(dep.nodeId);
-                if (!existing || dep.weight > existing.weight) {
-                  allDependentsMap.set(dep.nodeId, dep);
-                }
-              }
-            }
-
-            directDependents = Array.from(allDependentsMap.values());
-
-            // Update nodeId for transitive analysis if we have dependents
-            if (directDependents.length > 0 && entities.length > 0) {
-              // Use first entity's nodeId for transitive analysis
-              nodeId = primaryEntity.nodeId as string;
-            }
-          }
+          targetNodeIds = [targetId];
         }
 
-        // Get transitive dependents if nodeId provided
-        let transitiveDependents: Dependent[] = [];
-        if (nodeId && maxDepth > 1) {
-          const transitiveResult = await neo4jService.run(QUERIES.GET_TRANSITIVE_DEPENDENTS(maxDepth), {
-            nodeId,
-            projectId: resolvedProjectId,
-          });
-          transitiveDependents = normalizeTransitiveDependents(transitiveResult);
+        const impactParams = {
+          nodeIds: targetNodeIds,
+          projectId: resolvedProjectId,
+          excludedFilePath: scope === 'file' ? targetInfo.filePath : null,
+        };
+        const directResult = await neo4jService.run(QUERIES.GET_NODES_IMPACT, impactParams);
+        const directEdges = normalizeDependents(directResult);
+        const directDependents = deduplicateDependents(directEdges);
 
-          // Filter out direct dependents from transitive
-          const directIds = new Set(directDependents.map((d) => d.nodeId));
-          transitiveDependents = transitiveDependents.filter((d) => !directIds.has(d.nodeId));
+        let transitiveDependents: Dependent[] = [];
+        if (maxDepth > 1) {
+          const transitiveResult = await neo4jService.run(
+            QUERIES.GET_NODES_TRANSITIVE_DEPENDENTS(maxDepth),
+            impactParams,
+          );
+          const directIds = new Set(directDependents.map((dependent) => dependent.nodeId));
+          transitiveDependents = deduplicateDependents(normalizeTransitiveDependents(transitiveResult)).filter(
+            (dependent) => !directIds.has(dependent.nodeId),
+          );
         }
 
         // Calculate risk score
@@ -229,7 +193,7 @@ export const createImpactAnalysisTool = (server: McpServer): void => {
         const affectedFiles = getAffectedFiles([...directDependents, ...transitiveDependents]);
 
         // Find critical paths (high-weight relationships)
-        const criticalPaths = findCriticalPaths(directDependents, targetInfo, weights);
+        const criticalPaths = findCriticalPaths(directEdges, targetInfo, weights);
 
         // Build summary
         const summary = buildSummary(
@@ -242,6 +206,16 @@ export const createImpactAnalysisTool = (server: McpServer): void => {
 
         const result = {
           target: targetInfo,
+          analysis: {
+            scope,
+            analyzedNodeCount: targetNodeIds.length,
+            source: 'indexed_graph',
+            freshness: 'not_verified',
+            riskBasis: 'relationship_heuristic',
+          },
+          warnings: [
+            'Graph coverage can be incomplete or stale. Verify current source and tests before changing code.',
+          ],
           riskLevel,
           riskScore: Math.round(riskScore * 100) / 100,
           summary,
@@ -282,6 +256,9 @@ const normalizeDependents = (results: Record<string, unknown>[]): Dependent[] =>
     coreType: r.coreType as string | null,
     filePath: (r.filePath as string) ?? '',
     relationshipType: (r.relationshipType as string) ?? 'UNKNOWN',
+    targetNodeId: r.targetNodeId as string | undefined,
+    targetNodeName: r.targetNodeName as string | undefined,
+    targetNodeType: r.targetNodeType as string | undefined,
     weight:
       typeof r.weight === 'object'
         ? (r.weight as { toNumber: () => number }).toNumber()
@@ -302,6 +279,21 @@ const normalizeTransitiveDependents = (results: Record<string, unknown>[]): Depe
     depth: typeof r.depth === 'object' ? (r.depth as { toNumber: () => number }).toNumber() : (r.depth as number),
     relationshipPath: r.relationshipPath as string[],
   }));
+};
+
+const deduplicateDependents = (dependents: Dependent[]): Dependent[] => {
+  const byId = new Map<string, Dependent>();
+  for (const dependent of dependents) {
+    const existing = byId.get(dependent.nodeId);
+    if (
+      !existing ||
+      (dependent.depth ?? 1) < (existing.depth ?? 1) ||
+      ((dependent.depth ?? 1) === (existing.depth ?? 1) && dependent.weight > existing.weight)
+    ) {
+      byId.set(dependent.nodeId, dependent);
+    }
+  }
+  return [...byId.values()];
 };
 
 const calculateRiskScore = (
@@ -385,11 +377,13 @@ const findCriticalPaths = (
     // Only include high-weight relationships
     if (relWeight >= 0.6) {
       const depType = dep.semanticType ?? dep.coreType ?? '';
-      paths.push(`${dep.name} (${depType}) -[${dep.relationshipType}]-> ${target.name} (${target.type})`);
+      paths.push(
+        `${dep.name} (${depType}) -[${dep.relationshipType}]-> ${dep.targetNodeName ?? target.name} (${dep.targetNodeType ?? target.type})`,
+      );
     }
   }
 
-  return paths.slice(0, 10);
+  return [...new Set(paths)].slice(0, 10);
 };
 
 const buildSummary = (
@@ -400,7 +394,7 @@ const buildSummary = (
   riskLevel: string,
 ): string => {
   if (directCount === 0) {
-    return `${target.name} (${target.type}) has no external dependents - safe to modify`;
+    return `${target.name} (${target.type}) has no dependents found in the indexed graph. This does not establish that it is safe to modify.`;
   }
 
   return `Modifying ${target.name} (${target.type}) affects ${directCount} direct and ${transitiveCount} transitive dependents across ${fileCount} files. Risk: ${riskLevel}`;

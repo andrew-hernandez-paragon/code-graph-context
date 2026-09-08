@@ -40,15 +40,21 @@ interface Connection {
   relationshipChain?: Array<{ type: string }>;
 }
 
+interface TraversalData {
+  connections: Connection[];
+  graph?: any;
+  embeddingFallbacks?: Record<string, number>;
+}
+
 export class TraversalHandler {
   private static readonly NODE_NOT_FOUND_QUERY = 'MATCH (n) WHERE n.id = $nodeId AND n.projectId = $projectId RETURN n';
   private static readonly GET_NODE_BY_FILE_PATH_QUERY =
     'MATCH (sf:SourceFile {filePath: $filePath}) WHERE sf.projectId = $projectId RETURN sf.id AS nodeId LIMIT 1';
-  // Fallback: search by filePath ending (for partial paths) or by name
+  // Relative paths match the entire suffix, never just their basename.
   private static readonly GET_NODE_BY_FILE_PATH_FUZZY_QUERY = `
     MATCH (sf:SourceFile)
     WHERE sf.projectId = $projectId
-      AND (sf.filePath ENDS WITH $filePath OR sf.filePath ENDS WITH $fileName OR sf.name = $fileName)
+      AND (sf.filePath ENDS WITH $filePath OR sf.filePath = $relativePath)
     RETURN sf.id AS nodeId, sf.filePath AS filePath
     ORDER BY sf.filePath
     LIMIT 5
@@ -76,15 +82,14 @@ export class TraversalHandler {
       return exactResult[0].nodeId;
     }
 
-    // Extract filename for fuzzy matching using path module
-    const fileName = path.basename(filePath);
-    // For ends-with matching, use the original path without leading ./ or /
-    const pathForMatching = filePath.replace(/^\.[\\/]/, '').replace(/^[\\/]/, '');
+    if (path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) return null;
+
+    const pathForMatching = path.posix.normalize(filePath.replace(/\\/g, '/')).replace(/^\.\//, '');
 
     // Try fuzzy match
     const fuzzyResult = await this.neo4jService.run(TraversalHandler.GET_NODE_BY_FILE_PATH_FUZZY_QUERY, {
       filePath: '/' + pathForMatching,
-      fileName,
+      relativePath: pathForMatching,
       projectId,
     });
 
@@ -149,6 +154,20 @@ export class TraversalHandler {
         return createSuccessResponse(`No connections found for node "${nodeId}".`);
       }
 
+      const fallbackCount = Object.values(traversalData.embeddingFallbacks ?? {}).reduce(
+        (sum, count) => sum + count,
+        0,
+      );
+      const diagnostics =
+        fallbackCount > 0
+          ? {
+              ranking: { mode: 'weighted', embeddingFallbacks: traversalData.embeddingFallbacks },
+              warnings: [
+                `${fallbackCount} traversed nodes have incompatible embeddings and were ranked by relationship weight and depth. Verify current source; semantic relevance was unavailable for these nodes.`,
+              ],
+            }
+          : {};
+
       let result = summaryOnly
         ? this.formatSummaryOnlyJSON(startNode, traversalData, title)
         : this.formatTraversalJSON(
@@ -166,6 +185,7 @@ export class TraversalHandler {
 
       // Auto-summarize if output is too large (>50KB)
       const MAX_OUTPUT_BYTES = 50000;
+      Object.assign(result, diagnostics);
       let resultStr = JSON.stringify(result);
       if (!summaryOnly && resultStr.length > MAX_OUTPUT_BYTES) {
         await debugLog('Output too large, auto-summarizing', {
@@ -173,6 +193,7 @@ export class TraversalHandler {
           maxSize: MAX_OUTPUT_BYTES,
         });
         result = this.formatSummaryOnlyJSON(startNode, traversalData, title);
+        Object.assign(result, diagnostics);
         result.autoSummarized = true;
         result.originalSize = resultStr.length;
         resultStr = JSON.stringify(result);
@@ -208,7 +229,7 @@ export class TraversalHandler {
     skip: number,
     direction: 'OUTGOING' | 'INCOMING' | 'BOTH' = 'BOTH',
     relationshipTypes?: string[],
-  ) {
+  ): Promise<TraversalData | null> {
     const traversal = await this.neo4jService.run(
       QUERIES.EXPLORE_ALL_CONNECTIONS(Math.min(maxDepth, MAX_TRAVERSAL_DEPTH), direction, relationshipTypes),
       {
@@ -245,7 +266,7 @@ export class TraversalHandler {
     maxNodesPerDepth: number,
     direction: 'OUTGOING' | 'INCOMING' | 'BOTH' = 'BOTH',
     relationshipTypes?: string[],
-  ) {
+  ): Promise<TraversalData> {
     // Track visited nodes to avoid cycles
     const visitedNodeIds = new Set<string>([nodeId]);
 
@@ -259,6 +280,7 @@ export class TraversalHandler {
 
     // Result accumulators
     const allConnections: Connection[] = [];
+    const embeddingFallbacks: Record<string, number> = {};
     const nodeMap = new Map<string, Neo4jNode>(); // Dedupe nodes
 
     for (let depth = 1; depth <= maxDepth; depth++) {
@@ -274,6 +296,7 @@ export class TraversalHandler {
         queryEmbedding: embedding,
         depthDecay: 0.85,
         projectId,
+        relationshipTypes: relationshipTypes?.length ? relationshipTypes : null,
       });
 
       if (traversalResults.length === 0) {
@@ -290,6 +313,10 @@ export class TraversalHandler {
 
         // Skip if already visited (safety check)
         if (visitedNodeIds.has(neighborId)) continue;
+
+        if (scoring.embeddingStatus === 'dimension_mismatch' || scoring.embeddingStatus === 'zero_vector') {
+          embeddingFallbacks[scoring.embeddingStatus] = (embeddingFallbacks[scoring.embeddingStatus] ?? 0) + 1;
+        }
 
         // Mark as visited
         visitedNodeIds.add(neighborId);
@@ -328,6 +355,7 @@ export class TraversalHandler {
 
     return {
       connections: allConnections,
+      embeddingFallbacks,
     };
   }
 
