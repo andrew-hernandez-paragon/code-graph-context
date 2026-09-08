@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - Embedding Provenance, Evidence Preservation and Windows Support - 2026-09-08
+
+Pins local embeddings to one known model, stops traversal and impact analysis from silently discarding evidence, makes session-note chunks survive a reparse, and unblocks the server on Windows.
+
+### Changed
+
+- **Local default model is now `BAAI/bge-base-en-v1.5` (768 dims), previously `codesage/codesage-base-v2`.** Chosen after a local comparison: CodeSage gave modest retrieval gains at much higher CPU encoding cost. See Upgrading below, this changes vector width.
+- **`isOpenAIEnabled()` now requires both the flag and a key.** `OPENAI_EMBEDDINGS_ENABLED=true` alone is no longer enough; `OPENAI_API_KEY` must also be present. Prevents a half-configured install from selecting a provider it cannot reach. (`src/core/embeddings/embedding-config.ts`)
+- **Provider and dimension resolution moved to `embedding-config.ts`**, out of `embeddings.service.ts`. `OPENAI_ENABLED` remains a deprecated alias, and an explicit `OPENAI_EMBEDDINGS_ENABLED` now overrides it in both directions, including `false`.
+
+### Added
+
+- **Sidecar model mismatch is rejected.** The sidecar reports its model at `/health`; a value that disagrees with `EMBEDDING_MODEL` now fails loudly instead of writing vectors of the wrong width into the index.
+- **Embedding model provenance is recorded**, on nodes and on each session-note chunk, so a graph carries the model that produced it.
+- **`PYTHON_EXECUTABLE`** overrides sidecar interpreter discovery.
+
+### Fixed
+
+- **Traversal falls back to relationship ranking when vectors are incompatible, and says so.** Previously an incompatible vector silently produced no ranking signal. (`src/mcp/handlers/traversal.handler.ts`)
+- **`impact_analysis` analyzes every indexed symbol in a file** and reports unknown impact for a file it has no index for, rather than reporting an empty blast radius that reads as "safe to change". (`src/mcp/tools/impact-analysis.tool.ts`)
+- **Session-note chunks survive a reparse** and refresh when a note changes; a missing chunk index is handled rather than thrown.
+- **Windows startup**, three separate blockers: `startMcpServer()` passed a raw drive-letter path to `import()`, which the ESM loader rejects, now wrapped with `pathToFileURL()`; Docker status checks used single-quoted `--format` strings and `2>/dev/null`, neither of which `cmd.exe` interprets as a POSIX shell does; and Python resolution hardcoded the POSIX venv layout, ignoring `.venv/Scripts/python.exe`.
+- **Debug logs are gated**, and regression-test artifacts are excluded from the published package.
+
+### Upgrading
+
+Existing graphs are unaffected **if `EMBEDDING_MODEL` is set explicitly**. Check it before upgrading:
+
+- Set to `BAAI/bge-base-en-v1.5`: nothing to do.
+- Set to anything else: unchanged, your setting still wins.
+- **Not set at all**: the default moves from `codesage/codesage-base-v2` to `BAAI/bge-base-en-v1.5`, changing vector width. Your existing `embedded_nodes_idx` was built at the old dimension, so reparse with `clearExisting: true` to rebuild both nodes and index, or pin the old value with `EMBEDDING_MODEL=codesage/codesage-base-v2`.
+
+The new mismatch check means a wrong-width configuration fails loudly at startup rather than corrupting the index.
+
+Note that `npm i -g` replaces the package directory and takes `sidecar/.venv` with it. The sidecar rebuilds it on next use, which downloads torch (~1.1 GB) and can exceed `EMBEDDING_STARTUP_TIMEOUT_MS`. The first parse after an upgrade may fail on that timeout; retry once the rebuild finishes.
+
 ## [5.2.0] - Hybrid Code Search - 2026-09-07
 
 `search_codebase` gains a BM25 keyword channel alongside the existing vector channel, fused by reciprocal rank. Vector-only retrieval cannot rank exact symbol names: cosine scores for symbols sharing a name stem sit inside a band a fraction of a point wide, so the exact match lands mid-pack and the graph traversal roots on the wrong node.
