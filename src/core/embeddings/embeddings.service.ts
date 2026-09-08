@@ -5,11 +5,21 @@
  * and get the right implementation based on OPENAI_EMBEDDINGS_ENABLED.
  *
  *   OPENAI_EMBEDDINGS_ENABLED=true  → OpenAI text-embedding-3-large (requires OPENAI_API_KEY)
- *   default                         → Local Python sidecar with Qwen3-Embedding-0.6B
+ *   default                         → Local Python sidecar with BGE-base (768 dimensions)
  */
 
 import { LocalEmbeddingsService } from './local-embeddings.service.js';
 import { OpenAIEmbeddingsService } from './openai-embeddings.service.js';
+import { getEmbeddingModel, isOpenAIEnabled } from './embedding-config.js';
+
+export {
+  EMBEDDING_DIMENSIONS,
+  getEmbeddingDimensions,
+  getEmbeddingModel,
+  isOpenAIAvailable,
+  isOpenAIEnabled,
+  isOpenAIRequested,
+} from './embedding-config.js';
 
 // Re-export error classes so existing imports keep working
 export { OpenAIConfigError, OpenAIAPIError } from './openai-embeddings.service.js';
@@ -26,68 +36,19 @@ export const EMBEDDING_BATCH_CONFIG = {
 } as const;
 
 /**
- * Known dimensions per model.
- * For unlisted models, dimensions are detected at runtime from the sidecar health endpoint.
- */
-export const EMBEDDING_DIMENSIONS: Record<string, number> = {
-  // OpenAI models
-  'text-embedding-3-large': 3072,
-  'text-embedding-3-small': 1536,
-  // Local models (via sidecar)
-  'codesage/codesage-base-v2': 1024,
-  'Qodo/Qodo-Embed-1-1.5B': 1536,
-  'sentence-transformers/all-MiniLM-L6-v2': 384,
-  'sentence-transformers/all-mpnet-base-v2': 768,
-  'BAAI/bge-small-en-v1.5': 384,
-  'BAAI/bge-base-en-v1.5': 768,
-  'nomic-ai/nomic-embed-text-v1.5': 768,
-};
-
-export const isOpenAIEnabled = (): boolean => {
-  if (process.env.OPENAI_EMBEDDINGS_ENABLED?.toLowerCase() === 'true') {
-    return true;
-  }
-  // Backward-compat: OPENAI_ENABLED is deprecated in favour of OPENAI_EMBEDDINGS_ENABLED
-  if (process.env.OPENAI_ENABLED?.toLowerCase() === 'true') {
-    console.error(
-      JSON.stringify({
-        level: 'warn',
-        message: '[code-graph-context] OPENAI_ENABLED is deprecated. Use OPENAI_EMBEDDINGS_ENABLED=true instead.',
-      }),
-    );
-    return true;
-  }
-  return false;
-};
-
-/** Returns true when OPENAI_API_KEY is present, regardless of embedding provider. */
-export const isOpenAIAvailable = (): boolean => !!process.env.OPENAI_API_KEY;
-
-/**
- * Get the vector dimensions for the active embedding provider.
- * For known models, returns a static value. For unknown local models,
- * falls back to 1536 — the actual dimensions are verified at runtime
- * when the sidecar starts and reports via /health.
- */
-export const getEmbeddingDimensions = (): number => {
-  if (isOpenAIEnabled()) {
-    const model = process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-3-large';
-    return EMBEDDING_DIMENSIONS[model] ?? 3072;
-  }
-  const model = process.env.EMBEDDING_MODEL ?? 'codesage/codesage-base-v2';
-  return EMBEDDING_DIMENSIONS[model] ?? 1536;
-};
-
-/**
  * Factory that returns the correct service based on OPENAI_EMBEDDINGS_ENABLED.
  * Drop-in replacement everywhere `new EmbeddingsService()` was used.
  */
 export class EmbeddingsService implements IEmbeddingsService {
   private readonly impl: IEmbeddingsService;
+  readonly provider: 'local' | 'openai';
+  readonly model: string;
 
   constructor(model?: string) {
-    if (isOpenAIEnabled()) {
-      this.impl = new OpenAIEmbeddingsService(model);
+    this.provider = isOpenAIEnabled() ? 'openai' : 'local';
+    this.model = this.provider === 'openai' ? (model ?? getEmbeddingModel()) : getEmbeddingModel();
+    if (this.provider === 'openai') {
+      this.impl = new OpenAIEmbeddingsService(this.model);
     } else {
       this.impl = new LocalEmbeddingsService();
     }

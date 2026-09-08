@@ -109,7 +109,7 @@ The `init` command handles everything:
 - Starts a Neo4j container via Docker
 - Creates a Python virtual environment
 - Installs embedding dependencies (PyTorch, sentence-transformers)
-- Downloads the default embedding model (~3GB)
+- Downloads the default BGE-base embedding model
 
 ### 2. Configure Claude Code
 
@@ -189,12 +189,12 @@ If you prefer to edit the config files directly:
 | `NEO4J_URI` | No | `bolt://localhost:7687` | Neo4j connection URI |
 | `NEO4J_USER` | No | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | No | `PASSWORD` | Neo4j password |
-| `EMBEDDING_MODEL` | No | `codesage/codesage-base-v2` | Local embedding model (see [Embedding Configuration](#embedding-configuration)) |
+| `EMBEDDING_MODEL` | No | `BAAI/bge-base-en-v1.5` | Local embedding model (see [Embedding Configuration](#embedding-configuration)) |
 | `EMBEDDING_BATCH_SIZE` | No | `8` | Texts per embedding batch (lower = less memory, higher = faster) |
 | `EMBEDDING_SIDECAR_PORT` | No | `8787` | Port for local embedding server |
 | `EMBEDDING_DEVICE` | No | auto (`mps`/`cpu`) | Device for embeddings. Auto-detects MPS on Apple Silicon |
 | `EMBEDDING_HALF_PRECISION` | No | `false` | Set `true` for float16 (uses ~0.5x memory) |
-| `OPENAI_EMBEDDINGS_ENABLED` | No | `false` | Set `true` to use OpenAI instead of local embeddings |
+| `OPENAI_EMBEDDINGS_ENABLED` | No | `false` | Use OpenAI only when `true` and a nonempty API key is set |
 | `OPENAI_API_KEY` | No* | - | Required when `OPENAI_EMBEDDINGS_ENABLED=true`; also enables `natural_language_to_cypher` |
 
 ---
@@ -536,7 +536,11 @@ This enables queries like "find all hooks that use context" while maintaining AS
 
 ## Embedding Configuration
 
-Local embeddings are the default — **no API key needed**. The Python sidecar starts automatically on first use and runs a local model for high-quality code embeddings.
+Local BGE-base embeddings (768 dimensions) are the default. **No API key is needed.** The Python sidecar starts automatically on first use.
+
+An API key alone only enables `natural_language_to_cypher`. OpenAI embeddings require both `OPENAI_EMBEDDINGS_ENABLED=true` and a nonempty `OPENAI_API_KEY`. An explicit `false` overrides the deprecated `OPENAI_ENABLED` flag. Request failures never switch providers or models.
+
+Use the same explicit `EMBEDDING_MODEL` in every client sharing a sidecar and graph. The server rejects a sidecar whose model or vector dimensions differ from the configured model, including different models with equal dimensions.
 
 The sidecar uses **MPS (Apple Silicon GPU)** when available, falling back to CPU. It auto-shuts down after 3 minutes of inactivity to free memory, and restarts lazily when needed (~15-20s).
 
@@ -548,15 +552,17 @@ The sidecar uses **MPS (Apple Silicon GPU)** when available, falling back to CPU
 
 Set via the `EMBEDDING_MODEL` environment variable:
 
-| Model | Dimensions | RAM (fp16) | Quality | Best For |
-|-------|-----------|-----|---------|----------|
-| `codesage/codesage-base-v2` (default) | 1024 | ~700 MB | Best | Default, code-specific encoder, fast |
-| `Qodo/Qodo-Embed-1-1.5B` | 1536 | ~4.5 GB | Great | Machines with 32+ GB RAM |
-| `BAAI/bge-base-en-v1.5` | 768 | ~250 MB | Good | General purpose, low RAM |
-| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~100 MB | OK | Minimal RAM, fast |
-| `nomic-ai/nomic-embed-text-v1.5` | 768 | ~300 MB | Good | Code + prose mixed |
-| `sentence-transformers/all-mpnet-base-v2` | 768 | ~250 MB | Good | Balanced quality/speed |
-| `BAAI/bge-small-en-v1.5` | 384 | ~65 MB | OK | Smallest footprint |
+| Model | Dimensions | Description |
+|-------|------------|-------------|
+| `BAAI/bge-base-en-v1.5` (default) | 768 | General text retrieval, used for both code and session memory |
+| `codesage/codesage-base-v2` | 1024 | Code-specific encoder |
+| `Qodo/Qodo-Embed-1-1.5B` | 1536 | Larger code-specific encoder |
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | Small general text encoder |
+| `nomic-ai/nomic-embed-text-v1.5` | 768 | General text encoder |
+| `sentence-transformers/all-mpnet-base-v2` | 768 | General text encoder |
+| `BAAI/bge-small-en-v1.5` | 384 | Smaller BGE encoder |
+
+Dimensions describe vector size, not retrieval quality. Compare models using queries and relevant results from your own code and notes.
 
 **Example:** Use a lightweight model on a low-memory machine:
 ```bash
@@ -567,18 +573,15 @@ claude mcp add --scope user code-graph-context \
 
 ### Switching Models
 
-**Switching models requires re-parsing** — vector index dimensions are locked per model. Drop existing indexes first:
+Changing models requires re-embedding all affected code and session memory. Re-parsing code alone does not convert note or bookmark vectors. Equal vector dimensions do not make two models compatible.
 
-```cypher
-DROP INDEX embedded_nodes_idx IF EXISTS;
-DROP INDEX session_notes_idx IF EXISTS;
-```
+Back up the graph first. Preserve node IDs, note content, and relationships by replacing embedding properties in place. Vector indexes are shared across projects, so changing index dimensions requires coordinating every affected project and client. Updating the package does not migrate existing vectors.
 
-Then re-parse your project with the new model configured.
+When upgrading a graph built with the previous CodeSage default, explicitly keep `EMBEDDING_MODEL=codesage/codesage-base-v2` until you migrate it. Existing BGE users can keep their configuration. New graphs default to BGE.
 
 ### Using OpenAI Instead
 
-If you prefer OpenAI embeddings (higher quality, requires API key):
+To use OpenAI embeddings:
 
 ```bash
 claude mcp add --scope user code-graph-context \

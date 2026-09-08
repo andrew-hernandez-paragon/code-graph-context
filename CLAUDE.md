@@ -164,37 +164,26 @@ traverse_from_node({ projectId: "...", nodeId: "...", displayOptions: { includeC
 
 ## Embedding Configuration
 
-Local embeddings are the default — no API key needed. The sidecar runs a Python
+Local BGE-base embeddings are the default. No API key is needed. The sidecar runs a Python
 model that starts automatically on first use.
 
 | Env Variable | Default | Description |
 |---|---|---|
-| `EMBEDDING_MODEL` | `codesage/codesage-base-v2` | HuggingFace model for local embeddings |
+| `EMBEDDING_MODEL` | `BAAI/bge-base-en-v1.5` | HuggingFace model for local embeddings |
 | `EMBEDDING_DEVICE` | `mps`/`cpu` | Device for embeddings. Auto-detects MPS on Apple Silicon |
 | `EMBEDDING_HALF_PRECISION` | `false` | Set `true` for float16 (halves memory) |
 | `EMBEDDING_BATCH_SIZE` | `8` | Texts per embedding batch (lower = less memory, higher = faster) |
 | `EMBEDDING_SIDECAR_PORT` | `8787` | Port for the local embedding server |
-| `OPENAI_EMBEDDINGS_ENABLED` | `false` | Set `true` to use OpenAI instead of local embeddings |
+| `OPENAI_EMBEDDINGS_ENABLED` | `false` | Use OpenAI only when `true` and a nonempty API key is set |
 | `OPENAI_API_KEY` | — | Required when `OPENAI_EMBEDDINGS_ENABLED=true`; also enables `natural_language_to_cypher` |
 
 **Available local models (set via EMBEDDING_MODEL):**
 
-| Model | Dims | RAM | Quality | Best for |
-|---|---|---|---|---|
-| `codesage/codesage-base-v2` | 1024 | ~700 MB | Best | Default, code-specific encoder, fast |
-| `Qodo/Qodo-Embed-1-1.5B` | 1536 | ~9 GB | Great | Machines with 32+ GB RAM |
-| `BAAI/bge-base-en-v1.5` | 768 | ~500 MB | Good | General purpose, low RAM |
-| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~200 MB | OK | Minimal RAM, fast |
-| `nomic-ai/nomic-embed-text-v1.5` | 768 | ~600 MB | Good | Code + prose mixed |
-| `sentence-transformers/all-mpnet-base-v2` | 768 | ~500 MB | Good | Balanced quality/speed |
-| `BAAI/bge-small-en-v1.5` | 384 | ~130 MB | OK | Smallest footprint |
+See README.md for available models. BGE-base produces 768-dimensional vectors; CodeSage-base-v2 produces 1024-dimensional vectors. Dimensions alone do not determine quality or compatibility.
 
-**Switching models requires re-parsing** — vector index dimensions are locked per model.
-Drop existing indexes first:
-```cypher
-DROP INDEX embedded_nodes_idx IF EXISTS;
-DROP INDEX session_notes_idx IF EXISTS;
-```
+Use the same explicit model in every client sharing a sidecar and graph. Health checks and embedding responses must match the configured model and dimensions. Request errors never change providers. An explicit `OPENAI_EMBEDDINGS_ENABLED=false` overrides the deprecated `OPENAI_ENABLED` alias. An API key alone enables natural-language-to-Cypher while keeping embeddings local.
+
+Changing models requires re-embedding code, notes, and bookmarks. Preserve their IDs and relationships by updating embedding properties in place. Vector indexes are shared across projects; do not drop them to repair one project. Upgrading the package does not migrate vectors. Graphs built with the previous CodeSage default should explicitly retain that model until migration.
 
 ## Environment Variables
 
@@ -204,8 +193,8 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=PASSWORD
 
 # Optional — local embeddings work without any of these
-EMBEDDING_MODEL=codesage/codesage-base-v2
-OPENAI_EMBEDDINGS_ENABLED=true  # set true to use OpenAI for embeddings (deprecated: OPENAI_ENABLED)
+EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
+OPENAI_EMBEDDINGS_ENABLED=false # set true with a key to use OpenAI embeddings
 OPENAI_API_KEY=sk-...            # also enables natural_language_to_cypher when set
 ```
 

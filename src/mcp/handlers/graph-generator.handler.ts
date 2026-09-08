@@ -311,6 +311,9 @@ export class GraphGeneratorHandler {
             properties: {
               ...this.flattenProperties(item.node.properties),
               embedding,
+              embeddingProvider: embedding ? this.embeddingsService.provider : null,
+              embeddingModel: embedding ? this.embeddingsService.model : null,
+              embeddingDimensions: embedding?.length ?? null,
             },
           };
         });

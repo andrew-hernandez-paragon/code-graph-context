@@ -100,7 +100,10 @@ const CREATE_SESSION_NOTE_QUERY = `
 
 const SET_NOTE_EMBEDDING_QUERY = `
   MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
-  SET n.embedding = $embedding
+  SET n.embedding = $embedding,
+      n.embeddingProvider = $embeddingProvider,
+      n.embeddingModel = $embeddingModel,
+      n.embeddingDimensions = size($embedding)
   RETURN n.id AS noteId
 `;
 
@@ -290,6 +293,8 @@ export const createSessionSaveTool = (server: McpServer): void => {
               bookmarkId,
               projectId: resolvedProjectId,
               embedding,
+              embeddingProvider: embeddingsService.provider,
+              embeddingModel: embeddingsService.model,
             });
             bookmarkHasEmbedding = true;
           } catch (embErr) {
@@ -345,6 +350,8 @@ export const createSessionSaveTool = (server: McpServer): void => {
               noteId,
               projectId: resolvedProjectId,
               embedding,
+              embeddingProvider: embeddingsService.provider,
+              embeddingModel: embeddingsService.model,
             });
             hasEmbedding = true;
           } catch (embErr) {

@@ -1,6 +1,6 @@
 /**
  * Local Embeddings Service
- * Uses a Python sidecar running CodeSage-Base-v2 (or configurable model).
+ * Uses a Python sidecar running BGE-base (or a configured local model).
  * Default provider — no API key required.
  */
 

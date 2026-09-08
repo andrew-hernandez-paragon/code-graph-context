@@ -9,6 +9,8 @@ import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { DEFAULT_LOCAL_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, getLocalEmbeddingModel } from './embedding-config.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -24,11 +26,18 @@ export interface SidecarConfig {
 const DEFAULT_CONFIG: SidecarConfig = {
   port: parseInt(process.env.EMBEDDING_SIDECAR_PORT ?? '', 10) || 8787,
   host: '127.0.0.1',
-  model: process.env.EMBEDDING_MODEL ?? 'codesage/codesage-base-v2',
+  model: DEFAULT_LOCAL_EMBEDDING_MODEL,
   startupTimeoutMs: parseInt(process.env.EMBEDDING_STARTUP_TIMEOUT_MS ?? '', 10) || 120_000,
   requestTimeoutMs: parseInt(process.env.EMBEDDING_REQUEST_TIMEOUT_MS ?? '', 10) || 120_000,
   idleTimeoutMs: parseInt(process.env.EMBEDDING_IDLE_TIMEOUT_MS ?? '', 10) || 600_000, // 10 min — auto-shutdown after no requests
 };
+
+export class EmbeddingModelMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EmbeddingModelMismatchError';
+  }
+}
 
 export class EmbeddingSidecar {
   private process: ChildProcess | null = null;
@@ -49,7 +58,7 @@ export class EmbeddingSidecar {
   private readonly waitQueue: Array<() => void> = [];
 
   constructor(config: Partial<SidecarConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...DEFAULT_CONFIG, model: getLocalEmbeddingModel(), ...config };
   }
 
   /**
@@ -247,25 +256,49 @@ export class EmbeddingSidecar {
     );
   }
 
-  private async checkHealth(): Promise<boolean> {
+  async checkHealth(timeoutMs = 2000): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-
       const res = await fetch(`${this.baseUrl}/health`, { signal: controller.signal });
-      clearTimeout(timeout);
 
       if (res.ok) {
         const data = (await res.json()) as { status: string; dimensions?: number; model?: string };
-        if (data.dimensions) this._dimensions = data.dimensions;
-        return data.status === 'ok';
+        if (data.status !== 'ok') return false;
+        this.checkModel(data.model, data.dimensions);
+        return true;
       }
       return false;
     } catch (err) {
+      // A healthy server with a different model must never be reused or replaced.
+      if (err instanceof EmbeddingModelMismatchError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[embedding-sidecar] Health check failed: ${msg}`);
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
+  }
+
+  private checkModel(model: string | undefined, dimensions: number | undefined): void {
+    if (model !== this.config.model) {
+      throw new EmbeddingModelMismatchError(
+        `Embedding sidecar at ${this.baseUrl} reports model ${model ?? 'unknown'}; expected ${this.config.model}. ` +
+          'Use the same EMBEDDING_MODEL for every client sharing this sidecar.',
+      );
+    }
+    const expectedDimensions = EMBEDDING_DIMENSIONS[this.config.model] ?? this._dimensions;
+    if (
+      !Number.isInteger(dimensions) ||
+      dimensions! <= 0 ||
+      (expectedDimensions !== null && dimensions !== expectedDimensions)
+    ) {
+      throw new EmbeddingModelMismatchError(
+        `Embedding sidecar returned ${dimensions ?? 'unknown'} dimensions for ${model}; ` +
+          `expected ${expectedDimensions ?? 'a positive integer'}.`,
+      );
+    }
+    this._dimensions = dimensions!;
   }
 
   /**
@@ -274,6 +307,7 @@ export class EmbeddingSidecar {
    * at once. Excess callers wait in a FIFO queue (no timeout pressure).
    */
   async embed(texts: string[], gpuBatchSize?: number): Promise<number[][]> {
+    if (texts.length === 0) return [];
     await this.start();
 
     // Wait for a concurrency slot — the timeout only starts AFTER we
@@ -317,8 +351,15 @@ export class EmbeddingSidecar {
         throw new Error(`Sidecar embed failed (${res.status}): ${detail}`);
       }
 
-      const data = (await res.json()) as { embeddings: number[][]; dimensions: number };
-      if (data.dimensions) this._dimensions = data.dimensions;
+      const data = (await res.json()) as { embeddings: number[][]; dimensions: number; model?: string };
+      this.checkModel(data.model, data.dimensions);
+      if (
+        !Array.isArray(data.embeddings) ||
+        data.embeddings.length !== texts.length ||
+        data.embeddings.some((vector) => !Array.isArray(vector) || vector.length !== data.dimensions)
+      ) {
+        throw new EmbeddingModelMismatchError('Embedding sidecar returned an inconsistent vector count or dimension.');
+      }
       console.error(
         `[embedding-sidecar] Embedded ${texts.length} texts in ${Date.now() - startTime}ms (dims=${data.dimensions})`,
       );

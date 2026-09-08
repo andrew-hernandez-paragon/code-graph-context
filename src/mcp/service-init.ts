@@ -11,7 +11,9 @@ import {
   EmbeddingsService,
   isOpenAIEnabled,
   isOpenAIAvailable,
+  isOpenAIRequested,
   getEmbeddingDimensions,
+  getEmbeddingModel,
 } from '../core/embeddings/embeddings.service.js';
 import { LIST_PROJECTS_QUERY } from '../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../storage/neo4j/neo4j.service.js';
@@ -31,20 +33,23 @@ const checkConfiguration = async (): Promise<void> => {
   console.error(
     JSON.stringify({
       level: 'info',
-      message: `[code-graph-context] Embedding provider: ${provider} (${dims} dimensions)`,
+      message: `[code-graph-context] Embedding provider: ${provider}, model: ${getEmbeddingModel()} (${dims} dimensions)`,
     }),
   );
-  await debugLog('Embedding configuration', { provider, dimensions: dims });
+  await debugLog('Embedding configuration', { provider, model: getEmbeddingModel(), dimensions: dims });
 
-  if (openai && !isOpenAIAvailable()) {
+  if (isOpenAIRequested() && !isOpenAIAvailable()) {
     console.error(
       JSON.stringify({
         level: 'warn',
-        message:
-          '[code-graph-context] OPENAI_EMBEDDINGS_ENABLED=true but OPENAI_API_KEY not set. Embedding calls will fail.',
+        message: '[code-graph-context] OpenAI embeddings requested without OPENAI_API_KEY. Using local embeddings.',
       }),
     );
-    await debugLog('Configuration warning', { warning: 'OPENAI_EMBEDDINGS_ENABLED=true but OPENAI_API_KEY not set' });
+    await debugLog('Configuration warning', { warning: 'OpenAI embeddings requested without a key; using local' });
+  }
+
+  if (process.env.OPENAI_EMBEDDINGS_ENABLED === undefined && process.env.OPENAI_ENABLED !== undefined) {
+    console.error('[code-graph-context] OPENAI_ENABLED is deprecated. Use OPENAI_EMBEDDINGS_ENABLED instead.');
   }
 
   if (!openai) {
@@ -294,6 +299,8 @@ const backfillBookmarkEmbeddings = async (): Promise<void> => {
               bookmarkId: row.id,
               projectId: row.projectId,
               embedding,
+              embeddingProvider: embeddingsService.provider,
+              embeddingModel: embeddingsService.model,
             });
             totalMigrated += 1;
           } catch (rowErr) {

@@ -27,7 +27,7 @@ logger.info(f"Sidecar process starting (pid={os.getpid()})")
 app = FastAPI(title="code-graph-context embedding sidecar")
 
 model = None
-model_name = os.environ.get("EMBEDDING_MODEL", "codesage/codesage-base-v2")
+model_name = os.environ.get("EMBEDDING_MODEL", "").strip() or "BAAI/bge-base-en-v1.5"
 
 
 class EmbedRequest(BaseModel):

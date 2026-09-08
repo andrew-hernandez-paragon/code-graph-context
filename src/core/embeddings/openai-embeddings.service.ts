@@ -36,12 +36,11 @@ export class OpenAIEmbeddingsService {
   private readonly model: string;
 
   constructor(model: string = 'text-embedding-3-large') {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
       throw new OpenAIConfigError(
         'OPENAI_API_KEY environment variable is required.\n\n' +
-          'To use semantic search features (search_codebase, natural_language_to_cypher), ' +
-          'you need an OpenAI API key.\n\n' +
+          'OpenAI embeddings require an API key. Local semantic search does not.\n\n' +
           'Set it in your environment:\n' +
           '  export OPENAI_API_KEY=sk-...\n\n' +
           'Or in .env file:\n' +

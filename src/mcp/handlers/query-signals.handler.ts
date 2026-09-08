@@ -181,11 +181,7 @@ export const probeEmbeddingsHealth = async (timeoutMs = 100): Promise<boolean> =
   // sidecar that hasn't bound the port yet.
   const sidecar = getEmbeddingSidecar();
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(`${sidecar.baseUrl}/health`, { signal: ctrl.signal });
-    clearTimeout(t);
-    return res.ok;
+    return await sidecar.checkHealth(timeoutMs);
   } catch {
     return false;
   }

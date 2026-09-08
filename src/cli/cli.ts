@@ -12,6 +12,8 @@ import { fileURLToPath } from 'url';
 
 import { Command } from 'commander';
 
+import { getLocalEmbeddingModel } from '../core/embeddings/embedding-config.js';
+
 import {
   NEO4J_CONFIG,
   createContainer,
@@ -302,7 +304,7 @@ const setupSidecar = async (): Promise<void> => {
   }
 
   // Pre-download the embedding model so first real use is fast
-  const modelName = process.env.EMBEDDING_MODEL ?? 'codesage/codesage-base-v2';
+  const modelName = getLocalEmbeddingModel();
   await preDownloadModel(sidecarDir, python, modelName);
 };
 

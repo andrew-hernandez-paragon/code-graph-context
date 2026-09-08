@@ -241,7 +241,10 @@ export const QUERIES = {
 
   SET_BOOKMARK_EMBEDDING_QUERY: `
     MATCH (b:SessionBookmark {id: $bookmarkId, projectId: $projectId})
-    SET b.embedding = $embedding
+    SET b.embedding = $embedding,
+        b.embeddingProvider = $embeddingProvider,
+        b.embeddingModel = $embeddingModel,
+        b.embeddingDimensions = size($embedding)
     RETURN b.id AS bookmarkId
   `,
 

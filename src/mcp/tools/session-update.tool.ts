@@ -88,7 +88,10 @@ const RECREATE_NOTE_ABOUT_EDGES_QUERY = `
 
 const SET_NOTE_EMBEDDING_QUERY = `
   MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
-  SET n.embedding = $embedding
+  SET n.embedding = $embedding,
+      n.embeddingProvider = $embeddingProvider,
+      n.embeddingModel = $embeddingModel,
+      n.embeddingDimensions = size($embedding)
   RETURN n.id AS noteId
 `;
 
@@ -126,15 +129,7 @@ export const createSessionUpdateTool = (server: McpServer): void => {
       },
     },
     async (args) => {
-      const {
-        projectId,
-        noteId,
-        topic,
-        content,
-        category,
-        severity,
-        aboutNodeIds,
-      } = args;
+      const { projectId, noteId, topic, content, category, severity, aboutNodeIds } = args;
 
       // Distinguish "not provided" from "explicitly null" for supersededBy.
       const supersededByProvided = Object.prototype.hasOwnProperty.call(args, 'supersededBy');
@@ -203,6 +198,8 @@ export const createSessionUpdateTool = (server: McpServer): void => {
               noteId,
               projectId: resolvedProjectId,
               embedding,
+              embeddingProvider: embeddingsService.provider,
+              embeddingModel: embeddingsService.model,
             });
             reEmbedded = true;
           } catch (embErr) {
@@ -224,9 +221,7 @@ export const createSessionUpdateTool = (server: McpServer): void => {
                 aboutNodeIds: aboutNodeIdsChanged,
                 supersededBy: supersededByProvided,
               },
-              aboutEdges: aboutNodeIdsChanged
-                ? { dropped: aboutEdgesDropped, created: aboutEdgesCreated }
-                : null,
+              aboutEdges: aboutNodeIdsChanged ? { dropped: aboutEdgesDropped, created: aboutEdgesCreated } : null,
               reEmbedded,
               lastValidated: toNumber(updated.lastValidated),
               note: {
