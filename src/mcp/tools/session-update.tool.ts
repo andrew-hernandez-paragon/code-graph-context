@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { EmbeddingsService, getEmbeddingDimensions } from '../../core/embeddings/embeddings.service.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { saveSessionNoteChunks } from '../handlers/session-note-chunks.js';
 import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,11 @@ const UPDATE_NOTE_QUERY = `
       n.aboutNodeIds  = newAboutNodeIds,
       n.supersededBy  = CASE WHEN $supersededByProvided THEN $supersededBy ELSE n.supersededBy END,
       n.lastValidated = timestamp()
+  WITH n, oldAboutNodeIds, newAboutNodeIds
+  OPTIONAL MATCH (c:SessionNoteChunk {projectId: $projectId, parentNoteId: $noteId})
+  WHERE $content IS NOT NULL
+  WITH n, oldAboutNodeIds, newAboutNodeIds, collect(c) AS staleChunks
+  FOREACH (c IN staleChunks | DETACH DELETE c)
   RETURN n.id AS noteId,
          n.topic AS topic,
          n.content AS content,
@@ -204,6 +210,14 @@ export const createSessionUpdateTool = (server: McpServer): void => {
             reEmbedded = true;
           } catch (embErr) {
             await debugLog('session_update: re-embed failed (non-fatal)', { error: String(embErr), noteId });
+          }
+        }
+
+        if (content != null) {
+          try {
+            await saveSessionNoteChunks(neo4jService, resolvedProjectId, noteId, updated.content);
+          } catch (chunkErr) {
+            await debugLog('session_update: note chunk embedding failed', { error: String(chunkErr), noteId });
           }
         }
 

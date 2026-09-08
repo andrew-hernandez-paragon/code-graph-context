@@ -29,7 +29,9 @@ const DELETE_EXPIRED_NOTES_QUERY = `
   WHERE n.projectId = $projectId
     AND n.expiresAt IS NOT NULL
     AND n.expiresAt <= timestamp()
-  WITH collect(n) AS toDelete
+  OPTIONAL MATCH (c:SessionNoteChunk {projectId: $projectId, parentNoteId: n.id})
+  WITH collect(DISTINCT n) AS toDelete, collect(DISTINCT c) AS chunks
+  FOREACH (c IN chunks | DETACH DELETE c)
   WITH size(toDelete) AS cnt, toDelete
   FOREACH (n IN toDelete | DETACH DELETE n)
   RETURN cnt AS deleted

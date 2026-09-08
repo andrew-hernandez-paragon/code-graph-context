@@ -119,12 +119,17 @@ export class EmbeddingSidecar {
   }
 
   /**
-   * Resolve the python binary — prefer venv, fall back to system python3.
+   * Resolve the python binary — prefer PYTHON_EXECUTABLE env var, then venv,
+   * then fall back to system python. Handles Windows vs POSIX paths correctly.
    */
   private resolvePython(sidecarDir: string): string {
-    const venvPython = join(sidecarDir, '.venv', 'bin', 'python3');
+    if (process.env.PYTHON_EXECUTABLE) return process.env.PYTHON_EXECUTABLE;
+    const isWindows = process.platform === 'win32';
+    const venvPython = isWindows
+      ? join(sidecarDir, '.venv', 'Scripts', 'python.exe')
+      : join(sidecarDir, '.venv', 'bin', 'python3');
     if (existsSync(venvPython)) return venvPython;
-    return 'python3';
+    return isWindows ? 'python' : 'python3';
   }
 
   private async doStart(): Promise<void> {
@@ -205,15 +210,17 @@ export class EmbeddingSidecar {
   }
 
   private async verifyPython(): Promise<void> {
+    const sidecarDir = join(__dirname, '..', '..', '..', 'sidecar');
+    const python = this.resolvePython(sidecarDir);
     return new Promise<void>((resolve, reject) => {
-      const check = spawn('python3', ['--version'], { stdio: 'pipe' });
+      const check = spawn(python, ['--version'], { stdio: 'pipe' });
       let output = '';
       check.stdout?.on('data', (d: Buffer) => (output += d.toString()));
       check.stderr?.on('data', (d: Buffer) => (output += d.toString()));
       check.on('error', () => {
         reject(
           new Error(
-            'python3 not found. Local embeddings require Python 3.10+.\n\n' +
+            `${python} not found. Local embeddings require Python 3.10+.\n\n` +
               'Install Python and the sidecar dependencies:\n' +
               '  pip install -r sidecar/requirements.txt\n\n' +
               'Or set OPENAI_EMBEDDINGS_ENABLED=true to use OpenAI instead.',
@@ -222,7 +229,7 @@ export class EmbeddingSidecar {
       });
       check.on('close', (code) => {
         if (code !== 0) {
-          reject(new Error(`python3 check failed: ${output}`));
+          reject(new Error(`${python} check failed: ${output}`));
         } else {
           resolve();
         }

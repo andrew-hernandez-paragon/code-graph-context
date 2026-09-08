@@ -1,6 +1,6 @@
-# CLAUDE.md
+# Agent Guide — Code Graph Context
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI coding agents (Claude Code, Cursor, Codex, Aider, etc.) working in this repository.
 
 ## Project Overview
 

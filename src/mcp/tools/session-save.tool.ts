@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { EmbeddingsService, getEmbeddingDimensions } from '../../core/embeddings/embeddings.service.js';
+import { saveSessionNoteChunks } from '../handlers/session-note-chunks.js';
 import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
@@ -358,12 +359,20 @@ export const createSessionSaveTool = (server: McpServer): void => {
             await debugLog('Session save note embedding failed (non-fatal)', { error: String(embErr), noteId });
           }
 
+          let chunkCount = 0;
+          try {
+            chunkCount = await saveSessionNoteChunks(neo4jService, resolvedProjectId, noteId, content!);
+          } catch (chunkErr) {
+            await debugLog('Note chunk embedding failed; parent note was saved', { error: String(chunkErr), noteId });
+          }
+
           result.note = {
             noteId,
             topic: topic!,
             category: category!,
             severity,
             hasEmbedding,
+            chunkCount,
             expiresAt: expiresAt != null ? new Date(expiresAt).toISOString() : null,
           };
         }

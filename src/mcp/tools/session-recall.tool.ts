@@ -97,17 +97,28 @@ const GET_BOOKMARK_WORKING_SET_QUERY = `
   ORDER BY target.filePath, target.startLine
 `;
 
-/**
- * Semantic (vector) search for session notes.
- *
- * Returns top-K by vector similarity, then secondary-sorts by
- * lastValidated DESC and severity DESC so freshness and criticality
- * surface first when scores are close. Filters out notes whose
- * supersededBy is non-null unless includeSuperseded is true.
- */
-const VECTOR_SEARCH_NOTES_QUERY = `
-  CALL db.index.vector.queryNodes('session_notes_idx', toInteger($limit * 10), $queryEmbedding)
-  YIELD node AS n, score
+// Return the parent once, using its strongest direct or chunk match.
+export const buildNoteSearchQuery = (includeChunks = true): string => `
+  CALL {
+    CALL db.index.vector.queryNodes('session_notes_idx', toInteger($limit * 10), $queryEmbedding)
+    YIELD node, score
+    WHERE node:SessionNote AND node.projectId = $projectId
+    RETURN node AS n, score
+    ${
+      includeChunks
+        ? `
+    UNION ALL
+    CALL db.index.vector.queryNodes('session_note_chunks_idx', toInteger($limit * 10), $queryEmbedding)
+    YIELD node AS chunk, score
+    WHERE chunk:SessionNoteChunk AND chunk.projectId = $projectId
+    MATCH (chunk)-[:PART_OF]->(parent:SessionNote)
+    RETURN parent AS n, score
+    `
+        : ''
+    }
+  }
+
+  WITH n, max(score) AS score
   WHERE n.projectId = $projectId
     AND (n.expiresAt IS NULL OR n.expiresAt > timestamp())
     AND ($category IS NULL OR n.category = $category)
@@ -148,6 +159,21 @@ const VECTOR_SEARCH_NOTES_QUERY = `
            END
   LIMIT toInteger($limit)
 `;
+
+export const searchSessionNotes = async (
+  neo4jService: Pick<Neo4jService, 'run'>,
+  params: Record<string, unknown>,
+): Promise<any[]> => {
+  try {
+    return await neo4jService.run(buildNoteSearchQuery(), params);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('session_note_chunks_idx') || !/no such|not found|does not exist/i.test(message)) {
+      throw error;
+    }
+    return neo4jService.run(buildNoteSearchQuery(false), params);
+  }
+};
 
 /**
  * Filter-based (non-semantic) search for session notes.
@@ -215,7 +241,9 @@ export const createSessionRecallTool = (server: McpServer): void => {
           .max(50)
           .optional()
           .default(5)
-          .describe('Maximum notes to return. Default 5 keeps recall context tight; pass 10+ when broader retrieval is needed.'),
+          .describe(
+            'Maximum notes to return. Default 5 keeps recall context tight; pass 10+ when broader retrieval is needed.',
+          ),
         minSimilarity: z
           .number()
           .min(0)
@@ -305,11 +333,8 @@ export const createSessionRecallTool = (server: McpServer): void => {
               coreType: row.coreType,
               semanticType: row.semanticType,
               startLine:
-                typeof row.startLine === 'object' && row.startLine?.toNumber
-                  ? row.startLine.toNumber()
-                  : row.startLine,
-              endLine:
-                typeof row.endLine === 'object' && row.endLine?.toNumber ? row.endLine.toNumber() : row.endLine,
+                typeof row.startLine === 'object' && row.startLine?.toNumber ? row.startLine.toNumber() : row.startLine,
+              endLine: typeof row.endLine === 'object' && row.endLine?.toNumber ? row.endLine.toNumber() : row.endLine,
             };
 
             if (includeCode && row.sourceCode) {
@@ -357,7 +382,7 @@ export const createSessionRecallTool = (server: McpServer): void => {
         let rawNotes: any[];
 
         if (queryEmbedding) {
-          rawNotes = await neo4jService.run(VECTOR_SEARCH_NOTES_QUERY, {
+          rawNotes = await searchSessionNotes(neo4jService, {
             projectId: resolvedProjectId,
             queryEmbedding,
             limit: Math.floor(limit),
@@ -422,9 +447,7 @@ export const createSessionRecallTool = (server: McpServer): void => {
             sessionId
               ? `No bookmark or notes found for session "${sessionId}" in project ${resolvedProjectId}`
               : `No notes found for project ${resolvedProjectId}`,
-            query
-              ? 'Try a different query, or lower minSimilarity.'
-              : 'Save notes or bookmarks with session_save.',
+            query ? 'Try a different query, or lower minSimilarity.' : 'Save notes or bookmarks with session_save.',
           );
         }
 

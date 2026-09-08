@@ -25,15 +25,7 @@ import {
   UPDATE_PROJECT_STATUS_QUERY,
 } from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
-import {
-  TOOL_NAMES,
-  TOOL_METADATA,
-  DEFAULTS,
-  FILE_PATHS,
-  LOG_CONFIG,
-  PARSING,
-  CONFIG_FILE_PATTERNS,
-} from '../constants.js';
+import { TOOL_NAMES, TOOL_METADATA, FILE_PATHS, LOG_CONFIG, PARSING, CONFIG_FILE_PATTERNS } from '../constants.js';
 import {
   CrossFileEdge,
   deleteSourceFileSubgraphs,
@@ -41,10 +33,7 @@ import {
   getCrossFileEdges,
 } from '../handlers/cross-file-edge.helpers.js';
 import { GraphGeneratorHandler } from '../handlers/graph-generator.handler.js';
-import {
-  recoverSessionEdges,
-  formatSessionEdgeRecoverySummary,
-} from '../handlers/session-edge-recovery.helpers.js';
+import { recoverSessionEdges, formatSessionEdgeRecoverySummary } from '../handlers/session-edge-recovery.helpers.js';
 import { StreamingImportHandler } from '../handlers/streaming-import.handler.js';
 import { jobManager } from '../services/job-manager.js';
 import { watchManager } from '../services/watch-manager.js';

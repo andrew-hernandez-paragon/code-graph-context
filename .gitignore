@@ -152,3 +152,6 @@ neo4j-apoc-schema.json
 graph-output.json
 graph-data.json
 .mcp.json
+
+# Local agent permissions
+.claude/

@@ -51,10 +51,7 @@ export class GraphGeneratorHandler {
     this.projectId = projectId;
   }
 
-  async generateGraph(
-    graphJsonPath: string,
-    clearExisting = true,
-  ): Promise<ImportResult> {
+  async generateGraph(graphJsonPath: string, clearExisting = true): Promise<ImportResult> {
     await debugLog('Generating graph from JSON file', { graphJsonPath });
     const graphData = await this.loadGraphData(graphJsonPath);
     return this.generateGraphFromData(graphData.nodes, graphData.edges, clearExisting, graphData.metadata);
@@ -307,7 +304,9 @@ export class GraphGeneratorHandler {
           if (embedding) embeddedCount++;
           nodeResults[item.index] = {
             ...item.node,
-            labels: embedding ? [...item.node.labels, GraphGeneratorHandler.EMBEDDED_LABEL, GraphGeneratorHandler.GRAPH_NODE_LABEL] : [...item.node.labels, GraphGeneratorHandler.GRAPH_NODE_LABEL],
+            labels: embedding
+              ? [...item.node.labels, GraphGeneratorHandler.EMBEDDED_LABEL, GraphGeneratorHandler.GRAPH_NODE_LABEL]
+              : [...item.node.labels, GraphGeneratorHandler.GRAPH_NODE_LABEL],
             properties: {
               ...this.flattenProperties(item.node.properties),
               embedding,

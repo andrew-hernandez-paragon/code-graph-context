@@ -89,6 +89,7 @@ export class Neo4jService {
  */
 export const PRESERVED_LABELS = [
   'SessionNote',
+  'SessionNoteChunk',
   'SessionBookmark',
   'Pheromone',
   'Project',
@@ -229,6 +230,61 @@ export const QUERIES = {
     \`vector.similarity_function\`: 'cosine'
   }}
 `,
+
+  // Parent-child GraphRAG: long SessionNote content is also chunked into
+  // :SessionNoteChunk nodes linked back via :PART_OF. Each chunk gets its
+  // own embedding so vector recall surfaces specific facts buried in long
+  // architectural notes; renderers always traverse :PART_OF to return the
+  // parent SessionNote for display.
+  CREATE_SESSION_NOTE_CHUNKS_VECTOR_INDEX: (dimensions: number) => `
+  CREATE VECTOR INDEX session_note_chunks_idx IF NOT EXISTS
+  FOR (c:SessionNoteChunk) ON (c.embedding)
+  OPTIONS {indexConfig: {
+    \`vector.dimensions\`: ${dimensions},
+    \`vector.similarity_function\`: 'cosine'
+  }}
+`,
+
+  // Lookup index for chunks-by-parent and projectId-filtered scans.
+  CREATE_SESSION_NOTE_CHUNK_INDEX:
+    'CREATE INDEX session_note_chunk_idx IF NOT EXISTS FOR (c:SessionNoteChunk) ON (c.projectId, c.parentNoteId)',
+
+  CREATE_SESSION_NOTE_CHUNK_QUERY: `
+    MATCH (parent:SessionNote {id: $noteId, projectId: $projectId})
+    WHERE parent.content = $parentContent
+    CREATE (c:SessionNoteChunk {
+      id: $chunkId,
+      projectId: $projectId,
+      parentNoteId: $noteId,
+      chunkIndex: $chunkIndex,
+      content: $content,
+      estimatedTokens: $estimatedTokens,
+      embedding: $embedding,
+      embeddingProvider: $embeddingProvider,
+      embeddingModel: $embeddingModel,
+      embeddingDimensions: size($embedding),
+      createdAt: timestamp()
+    })
+    MERGE (c)-[:PART_OF]->(parent)
+    RETURN c.id AS id
+  `,
+
+  SET_NOTE_CHUNK_EMBEDDING_QUERY: `
+    MATCH (c:SessionNoteChunk {id: $chunkId, projectId: $projectId})
+    SET c.embedding = $embedding,
+        c.embeddingProvider = $embeddingProvider,
+        c.embeddingModel = $embeddingModel,
+        c.embeddingDimensions = size($embedding)
+    RETURN c.id AS id
+  `,
+
+  // Delete all chunks belonging to a parent SessionNote (used by backfill /
+  // re-chunking — never used for note deletion since note deletion isn't a
+  // supported operation today).
+  DELETE_NOTE_CHUNKS_QUERY: `
+    MATCH (c:SessionNoteChunk {projectId: $projectId, parentNoteId: $noteId})
+    DETACH DELETE c
+  `,
 
   CREATE_SESSION_BOOKMARKS_VECTOR_INDEX: (dimensions: number) => `
   CREATE VECTOR INDEX session_bookmarks_idx IF NOT EXISTS

@@ -6,7 +6,6 @@
 import { Neo4jNode, Neo4jEdge } from '../../core/config/schema.js';
 import { StreamingParser } from '../../core/parsers/typescript-parser.js';
 import { ProgressCallback, ProgressReporter } from '../../core/utils/progress-reporter.js';
-import { DEFAULTS } from '../constants.js';
 import { debugLog } from '../utils.js';
 
 import { GraphGeneratorHandler } from './graph-generator.handler.js';

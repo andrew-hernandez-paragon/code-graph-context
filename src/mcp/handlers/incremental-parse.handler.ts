@@ -12,7 +12,7 @@ import { ParserFactory } from '../../core/parsers/parser-factory.js';
 import { detectChangedFiles } from '../../core/utils/file-change-detection.js';
 import { resolveProjectId, getProjectName, UPSERT_PROJECT_QUERY } from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
-import { DEFAULTS, FILE_PATHS, LOG_CONFIG } from '../constants.js';
+import { FILE_PATHS, LOG_CONFIG } from '../constants.js';
 import { debugLog } from '../utils.js';
 
 import {

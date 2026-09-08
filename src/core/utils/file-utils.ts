@@ -23,7 +23,11 @@ const serializeForLog = (data: any): any => {
   return data;
 };
 
+const isDebugLogEnabled = (): boolean => process.env.CGC_DEBUG === '1' || process.env.CGC_DEBUG === 'true';
+
 export const debugLog = async (message: string, data?: any): Promise<void> => {
+  if (!isDebugLogEnabled()) return;
+
   const timestamp = new Date().toISOString();
   const serialized = data !== undefined ? serializeForLog(data) : undefined;
   const logEntry = `[${timestamp}] ${message}\n${serialized !== undefined ? JSON.stringify(serialized, null, LOG_CONFIG.jsonIndent) : ''}\n${LOG_CONFIG.separator}\n`;
