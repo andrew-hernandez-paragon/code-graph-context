@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.5.1] - Indexed Node Lookups - 2026-10-16
+
+Code node lookups by id and file path stopped scanning the whole database.
 
 ### Fixed
 
@@ -13,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Two `GraphNode` indexes**, `project_filepath_graphnode_idx` on `(projectId, filePath)` and `project_name_graphnode_idx` on `(projectId, name)`, created with the existing project indexes on each parse. (`src/storage/neo4j/neo4j.service.ts`, `src/mcp/handlers/graph-generator.handler.ts`)
+- **Two `GraphNode` indexes**, `project_filepath_graphnode_idx` on `(projectId, filePath)` and `project_name_graphnode_idx` on `(projectId, name)`, created with the existing project indexes on each parse, and at every server start so a graph parsed by an older version gets them without a reparse. (`src/storage/neo4j/neo4j.service.ts`, `src/mcp/handlers/graph-generator.handler.ts`, `src/mcp/service-init.ts`)
+
+### Changed
+
+- **Note, bookmark, pheromone and task targets must be code nodes.** They now match `:GraphNode`, where before they matched any node except session and coordination labels. An `aboutNodeIds` entry naming a non-code node such as a `Deliberation` no longer links. On the measured graph every one of the 319 existing `ABOUT` targets was a `GraphNode`.
 
 ## [5.5.0] - Native Neo4j on macOS - 2026-10-16
 
