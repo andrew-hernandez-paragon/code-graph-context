@@ -517,6 +517,8 @@ const runNativeInit = async (native: NativeNeo4jProvider, resolved: ResolvedInit
   if (dockerNeo4jUsesPorts(resolved)) {
     await native.disableService();
     log(sym.warn, `The Docker graph (${NEO4J_CONFIG.containerName}) is still running on these ports`);
+    // The embedding setup does not depend on which Neo4j runs, and npm i -g removes it on every upgrade.
+    await setupSidecar();
     console.log(
       `\n  Native Neo4j is configured but not started. ${c.dim}code-graph-context migrate-from-docker${c.reset} moves the Docker graph over.\n`,
     );
