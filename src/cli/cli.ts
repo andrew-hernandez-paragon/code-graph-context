@@ -14,6 +14,7 @@ import { Command } from 'commander';
 
 import { getLocalEmbeddingModel } from '../core/embeddings/embedding-config.js';
 
+import { runEmbeddingsStart } from './embeddings-start.js';
 import {
   NEO4J_CONFIG,
   createContainer,
@@ -620,8 +621,17 @@ program.command('status').description('Check Neo4j and Docker status').action(ru
 
 program.command('stop').description('Stop the Neo4j container').action(runStop);
 
+const embeddings = program.command('embeddings').description('Manage the local embedding server');
+
+embeddings
+  .command('start')
+  .description('Start the local embedding server detached, or confirm it is already healthy')
+  .action(async () => {
+    process.exit(await runEmbeddingsStart());
+  });
+
 // Default action: start MCP server if no command given
-const knownCommands = ['init', 'status', 'stop', 'help'];
+const knownCommands = ['init', 'status', 'stop', 'embeddings', 'help'];
 const args = process.argv.slice(2);
 const hasCommand = args.some((arg) => knownCommands.includes(arg) || arg.startsWith('-'));
 

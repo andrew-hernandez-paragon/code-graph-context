@@ -27,6 +27,7 @@ logger.info(f"Sidecar process starting (pid={os.getpid()})")
 app = FastAPI(title="code-graph-context embedding sidecar")
 
 model = None
+last_embed_at = time.monotonic()
 model_name = os.environ.get("EMBEDDING_MODEL", "").strip() or "BAAI/bge-base-en-v1.5"
 
 
@@ -104,6 +105,7 @@ async def embed(req: EmbedRequest):
     if not req.texts:
         return EmbedResponse(embeddings=[], dimensions=0, model=model_name)
 
+    _mark_embed_activity()
     logger.info(f"Embed request: {len(req.texts)} texts, batch_size={req.batch_size}")
     start = time.time()
 
@@ -120,6 +122,8 @@ async def embed(req: EmbedRequest):
     except Exception as e:
         logger.error(f"Embedding error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _mark_embed_activity()
 
 
 def _encode_with_oom_fallback(texts: list[str], batch_size: int) -> list[list[float]]:
@@ -198,8 +202,51 @@ def _watch_stdin():
     t.start()
 
 
-# Only watch stdin if it's a pipe (not a TTY) — avoids issues when run manually
-if not sys.stdin.isatty():
+def _mark_embed_activity():
+    global last_embed_at
+    last_embed_at = time.monotonic()
+
+
+IDLE_CHECK_INTERVAL_S = 30
+
+
+def _idle_timeout_s() -> float:
+    raw = os.environ.get("EMBEDDING_IDLE_TIMEOUT_S", "").strip()
+    try:
+        return float(raw) if raw else 600.0
+    except ValueError:
+        return 600.0
+
+
+def _watch_idle(timeout_s: float):
+    """
+    Shut the server down when no /embed request has arrived for timeout_s seconds.
+    /health does not count, so a client polling health cannot keep the model loaded.
+    """
+
+    def _watcher():
+        while True:
+            time.sleep(IDLE_CHECK_INTERVAL_S)
+            idle_s = time.monotonic() - last_embed_at
+            if idle_s > timeout_s:
+                logger.info(f"No embed requests for {idle_s:.0f}s (limit {timeout_s:.0f}s), shutting down")
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+
+    threading.Thread(target=_watcher, daemon=True).start()
+
+
+_idle_limit_s = _idle_timeout_s()
+if _idle_limit_s > 0:
+    _watch_idle(_idle_limit_s)
+else:
+    logger.info("Idle shutdown disabled (EMBEDDING_IDLE_TIMEOUT_S <= 0)")
+
+# Watch stdin only for an MCP-spawned child with a pipe (not a TTY). A detached server
+# sets EMBEDDING_WATCH_PARENT=0 because no parent owns it.
+if os.environ.get("EMBEDDING_WATCH_PARENT") == "0":
+    logger.info("Parent watch disabled (EMBEDDING_WATCH_PARENT=0)")
+elif not sys.stdin.isatty():
     _watch_stdin()
 else:
     logger.info("Running in terminal mode, stdin watcher disabled")

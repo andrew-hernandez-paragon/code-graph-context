@@ -542,7 +542,9 @@ An API key alone only enables `natural_language_to_cypher`. OpenAI embeddings re
 
 Use the same explicit `EMBEDDING_MODEL` in every client sharing a sidecar and graph. The server rejects a sidecar whose model or vector dimensions differ from the configured model, including different models with equal dimensions.
 
-The sidecar uses **MPS (Apple Silicon GPU)** when available, falling back to CPU. It auto-shuts down after 3 minutes of inactivity to free memory, and restarts lazily when needed (~15-20s).
+The sidecar uses **MPS (Apple Silicon GPU)** when available, falling back to CPU. The server owns its lifetime: it exits after `EMBEDDING_IDLE_TIMEOUT_S` seconds (default 600, `0` disables) without a `/embed` request, whoever sent it, and the MCP server starts it again on the next embedding (~15-20s).
+
+Any process can start a server that outlives it with `code-graph-context embeddings start`. It exits 0 once `/health` is ok (printing the model and port) and exits 1 with the reason and the log path (`code-graph-context-embedding-sidecar.log` in the temp directory) otherwise. A server started this way does not watch a parent process; one spawned by the MCP server still exits when the MCP server does (`EMBEDDING_WATCH_PARENT=0` turns that watch off).
 
 > **Device override:** Set `EMBEDDING_DEVICE=cpu` to force CPU if MPS causes issues.
 >
