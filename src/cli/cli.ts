@@ -15,16 +15,12 @@ import { Command } from 'commander';
 import { getLocalEmbeddingModel } from '../core/embeddings/embedding-config.js';
 import { Neo4jConnection, getNeo4jConnection } from '../storage/neo4j/neo4j-connection.js';
 
+import { ProcessCommandRunner } from './command-runner.js';
 import { runEmbeddingsStart } from './embeddings-start.js';
-import { isApocAvailable, probeBolt, queryBolt, waitForBolt } from './neo4j-bolt.js';
-import {
-  Neo4jBoltClient,
-  NodeCommandRunner,
-  NodeMigrationFileSystem,
-  SystemClock,
-} from './migrate-from-docker-adapters.js';
+import { Neo4jBoltClient, NodeMigrationFileSystem, SystemClock } from './migrate-from-docker-adapters.js';
 import { MigrateFromDockerOptions, resolveDataDirectory, runMigrateFromDocker } from './migrate-from-docker.js';
 import { createMigrationEnvironment } from './migration-environment.js';
+import { isApocAvailable, probeBolt, queryBolt, waitForApoc, waitForBolt } from './neo4j-bolt.js';
 import {
   NEO4J_CONFIG,
   createContainer,
@@ -519,6 +515,7 @@ const runNativeInit = async (native: NativeNeo4jProvider, resolved: ResolvedInit
   }
 
   if (dockerNeo4jUsesPorts(resolved)) {
+    await native.disableService();
     log(sym.warn, `The Docker graph (${NEO4J_CONFIG.containerName}) is still running on these ports`);
     console.log(
       `\n  Native Neo4j is configured but not started. ${c.dim}code-graph-context migrate-from-docker${c.reset} moves the Docker graph over.\n`,
@@ -541,7 +538,7 @@ const runNativeInit = async (native: NativeNeo4jProvider, resolved: ResolvedInit
     process.exit(1);
   }
 
-  const apocOk = await isApocAvailable(connection);
+  const apocOk = await waitForApoc(connection);
   log(apocOk ? sym.ok : sym.warn, apocOk ? 'APOC plugin verified' : 'APOC plugin not detected');
   const language = await queryDefaultLanguage(connection);
   log(
@@ -635,7 +632,7 @@ const runDockerInit = async (resolved: ResolvedInitOptions): Promise<void> => {
   }
 
   // Check APOC
-  const apocOk = await isApocAvailable(connection);
+  const apocOk = await waitForApoc(connection);
   log(apocOk ? sym.ok : sym.warn, apocOk ? 'APOC plugin verified' : 'APOC still loading (should be ready shortly)');
 
   printNeo4jReady(resolved);
@@ -858,8 +855,8 @@ program
   .action(async (options: MigrateFromDockerOptions) => {
     process.exit(
       await runMigrateFromDocker(options, {
-        ...createMigrationEnvironment(),
-        commands: new NodeCommandRunner(),
+        ...(await createMigrationEnvironment()),
+        commands: new ProcessCommandRunner(),
         bolt: new Neo4jBoltClient(),
         files: new NodeMigrationFileSystem(),
         clock: new SystemClock(),

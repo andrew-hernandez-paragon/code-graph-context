@@ -61,3 +61,19 @@ export const isApocAvailable = async (connection: Neo4jConnection): Promise<bool
     return false;
   }
 };
+
+export const APOC_WAIT_TIMEOUT_MS = 30000;
+
+/** Right after a first start, Bolt can answer `RETURN 1` and still reject the next query for a few seconds. */
+export const waitForApoc = async (
+  connection: Neo4jConnection,
+  timeoutMs: number = APOC_WAIT_TIMEOUT_MS,
+  intervalMs: number = BOLT_WAIT_INTERVAL_MS,
+): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isApocAvailable(connection)) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+};

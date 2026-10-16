@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { Neo4jConnection } from '../../storage/neo4j/neo4j-connection.js';
+import { CommandResult, CommandRunner } from '../command-runner.js';
 import {
   BoltClient,
-  BoltEndpoint,
   Clock,
-  CommandResult,
-  CommandRunner,
   DockerToNativeMigrationService,
   GraphSnapshot,
   IndexDefinition,
@@ -133,7 +132,7 @@ class FakeClock implements Clock {
 }
 
 class FakeBolt implements BoltClient {
-  readonly sourceEndpoints: BoltEndpoint[] = [];
+  readonly sourceEndpoints: Neo4jConnection[] = [];
   sourceSnapshot = snapshot();
   targetSnapshots: GraphSnapshot[] = [snapshot()];
   reachableAfterAttempts = 0;
@@ -145,7 +144,7 @@ class FakeBolt implements BoltClient {
     return this.reachableAttempts > this.reachableAfterAttempts;
   }
 
-  async captureGraphSnapshot(endpoint: BoltEndpoint): Promise<GraphSnapshot> {
+  async captureGraphSnapshot(endpoint: Neo4jConnection): Promise<GraphSnapshot> {
     if (endpoint.uri.endsWith(':27687')) {
       const read = this.targetSnapshots[Math.min(this.targetReads, this.targetSnapshots.length - 1)];
       this.targetReads += 1;
@@ -157,7 +156,7 @@ class FakeBolt implements BoltClient {
 }
 
 class FakeTarget implements MigrationTarget {
-  readonly connection: BoltEndpoint = { uri: 'bolt://localhost:27687', user: 'neo4j', password: 'PASSWORD' };
+  readonly connection: Neo4jConnection = { uri: 'bolt://localhost:27687', user: 'neo4j', password: 'PASSWORD' };
   configured = true;
   data = false;
   version = '2026.02.2';

@@ -10,21 +10,9 @@
 import { homedir } from 'os';
 import { basename, dirname, join } from 'path';
 
-export interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+import { Neo4jConnection } from '../storage/neo4j/neo4j-connection.js';
 
-export interface CommandRunner {
-  run(file: string, args: string[]): Promise<CommandResult>;
-}
-
-export interface BoltEndpoint {
-  uri: string;
-  user: string;
-  password: string;
-}
+import { CommandResult, CommandRunner } from './command-runner.js';
 
 export interface IndexDefinition {
   name: string;
@@ -43,8 +31,8 @@ export interface GraphSnapshot {
 }
 
 export interface BoltClient {
-  isReachable(endpoint: BoltEndpoint): Promise<boolean>;
-  captureGraphSnapshot(endpoint: BoltEndpoint): Promise<GraphSnapshot>;
+  isReachable(endpoint: Neo4jConnection): Promise<boolean>;
+  captureGraphSnapshot(endpoint: Neo4jConnection): Promise<GraphSnapshot>;
 }
 
 export interface MigrationFileSystem {
@@ -75,7 +63,7 @@ export interface MigrationTarget {
   stop(): Promise<void>;
   load(dumpDir: string): Promise<void>;
   start(): Promise<void>;
-  readonly connection: BoltEndpoint;
+  readonly connection: Neo4jConnection;
 }
 
 export interface MigrateFromDockerOptions {
@@ -380,7 +368,7 @@ export class DockerToNativeMigrationService {
     return version;
   }
 
-  private sourceEndpoint(source: SourceContainer): BoltEndpoint {
+  private sourceEndpoint(source: SourceContainer): Neo4jConnection {
     if (source.boltHostPort === null) {
       throw new MigrationError(`Container ${source.name} publishes no host port for Bolt (7687)`);
     }
@@ -579,7 +567,7 @@ export class DockerToNativeMigrationService {
     await this.waitForBolt(target.connection, target.describe());
   }
 
-  private async waitForBolt(endpoint: BoltEndpoint, description: string): Promise<void> {
+  private async waitForBolt(endpoint: Neo4jConnection, description: string): Promise<void> {
     const { bolt, clock, output } = this.dependencies;
     const deadline = clock.now().getTime() + this.settings.bootWaitMs;
     while (!(await bolt.isReachable(endpoint))) {

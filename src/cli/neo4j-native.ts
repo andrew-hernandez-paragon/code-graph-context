@@ -3,11 +3,11 @@
  * conf, plugins and data, so `brew upgrade` (which replaces libexec) never touches them.
  */
 
-import { execFile } from 'child_process';
 import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 
+import { CommandResult, CommandRunner, ProcessCommandRunner } from './command-runner.js';
 import {
   ManagedConfSettings,
   NativeNeo4jPaths,
@@ -24,16 +24,6 @@ const APOC_JAR = /^apoc-.*\.jar$/;
 const NEO4J_CONF_FILE = 'neo4j.conf';
 const UNLOAD_POLL_ATTEMPTS = 120;
 const UNLOAD_POLL_INTERVAL_MS = 250;
-
-export interface CommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-export interface CommandRunner {
-  run(command: string, args: string[], options?: { env?: Record<string, string> }): Promise<CommandResult>;
-}
 
 export interface NativeFileSystem {
   exists(path: string): Promise<boolean>;
@@ -58,22 +48,6 @@ export interface NativeNeo4jSettings {
   launchdLabel: string;
   launchAgentsDir: string;
   uid: number;
-}
-
-export class ProcessCommandRunner implements CommandRunner {
-  run(command: string, args: string[], options: { env?: Record<string, string> } = {}): Promise<CommandResult> {
-    return new Promise((resolve) => {
-      execFile(
-        command,
-        args,
-        { encoding: 'utf-8', env: { ...process.env, ...options.env }, maxBuffer: 16 * 1024 * 1024 },
-        (error, stdout, stderr) => {
-          const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
-          resolve({ exitCode, stdout, stderr: error && !stderr ? error.message : stderr });
-        },
-      );
-    });
-  }
 }
 
 export class NodeNativeFileSystem implements NativeFileSystem {
@@ -217,6 +191,8 @@ export class NativeNeo4jProvider {
 
   /** Never uses `kickstart -k`: many MCP servers may call this at once and must not restart each other's Neo4j. */
   async startService(): Promise<void> {
+    // A disabled agent refuses bootstrap, and init or a rollback may have disabled it.
+    await this.expectSuccess(await this.runner.run('launchctl', ['enable', this.serviceTarget]), 'enable');
     if (await this.isServiceLoaded()) {
       await this.expectSuccess(await this.runner.run('launchctl', ['kickstart', this.serviceTarget]), 'kickstart');
       return;
@@ -226,6 +202,11 @@ export class NativeNeo4jProvider {
     if (result.exitCode !== 0 && !(await this.isServiceLoaded())) {
       await this.expectSuccess(result, 'bootstrap');
     }
+  }
+
+  /** Keeps launchd from starting Neo4j at login while another Neo4j (the Docker graph) owns the ports. */
+  async disableService(): Promise<void> {
+    await this.expectSuccess(await this.runner.run('launchctl', ['disable', this.serviceTarget]), 'disable');
   }
 
   async stopService(): Promise<void> {

@@ -1,51 +1,23 @@
 /**
- * Node implementations of the ports `migrate-from-docker` runs against: processes, Bolt, files and time.
+ * Node implementations of the ports `migrate-from-docker` runs against: Bolt, files and time.
  */
 
-import { spawn } from 'child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 import neo4j from 'neo4j-driver';
 
-import {
-  BoltClient,
-  BoltEndpoint,
-  Clock,
-  CommandResult,
-  CommandRunner,
-  GraphSnapshot,
-  MigrationFileSystem,
-} from './migrate-from-docker.js';
+import { Neo4jConnection } from '../storage/neo4j/neo4j-connection.js';
 
-export class NodeCommandRunner implements CommandRunner {
-  run(file: string, args: string[]): Promise<CommandResult> {
-    return new Promise((resolve) => {
-      const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (chunk) => (stdout += chunk));
-      child.stderr.on('data', (chunk) => (stderr += chunk));
-      child.on('error', (error) => resolve({ exitCode: 127, stdout, stderr: error.message }));
-      child.on('close', (code) => resolve({ exitCode: code ?? 1, stdout, stderr }));
-    });
-  }
-}
+import { BoltClient, Clock, GraphSnapshot, MigrationFileSystem } from './migrate-from-docker.js';
+import { probeBolt } from './neo4j-bolt.js';
 
 export class Neo4jBoltClient implements BoltClient {
-  async isReachable(endpoint: BoltEndpoint): Promise<boolean> {
-    const driver = this.openDriver(endpoint);
-    try {
-      await driver.getServerInfo();
-      return true;
-    } catch {
-      return false;
-    } finally {
-      await driver.close();
-    }
+  isReachable(endpoint: Neo4jConnection): Promise<boolean> {
+    return probeBolt(endpoint);
   }
 
-  async captureGraphSnapshot(endpoint: BoltEndpoint): Promise<GraphSnapshot> {
+  async captureGraphSnapshot(endpoint: Neo4jConnection): Promise<GraphSnapshot> {
     const driver = this.openDriver(endpoint);
     const session = driver.session({ defaultAccessMode: neo4j.session.READ });
     try {
@@ -81,7 +53,7 @@ export class Neo4jBoltClient implements BoltClient {
     }
   }
 
-  private openDriver(endpoint: BoltEndpoint) {
+  private openDriver(endpoint: Neo4jConnection) {
     return neo4j.driver(endpoint.uri, neo4j.auth.basic(endpoint.user, endpoint.password), {
       disableLosslessIntegers: true,
     });

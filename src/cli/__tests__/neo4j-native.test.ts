@@ -1,13 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { CommandResult, CommandRunner } from '../command-runner.js';
 import { resolveNativePaths } from '../neo4j-native-files.js';
-import {
-  CommandResult,
-  CommandRunner,
-  NativeFileSystem,
-  NativeNeo4jProvider,
-  NativeNeo4jSettings,
-} from '../neo4j-native.js';
+import { NativeFileSystem, NativeNeo4jProvider, NativeNeo4jSettings } from '../neo4j-native.js';
 
 const PREFIX = '/opt/homebrew/opt/neo4j';
 const ok: CommandResult = { exitCode: 0, stdout: '', stderr: '' };
@@ -172,13 +167,16 @@ describe('NativeNeo4jProvider.configure', () => {
 describe('NativeNeo4jProvider service commands', () => {
   it('bootstraps the plist when the service is not loaded', async () => {
     await provider.startService();
-    expect(runner.launchctlCalls()).toEqual(['bootstrap gui/501 /u/Library/LaunchAgents/dev.cgc.test.plist']);
+    expect(runner.launchctlCalls()).toEqual([
+      'enable gui/501/dev.cgc.test',
+      'bootstrap gui/501 /u/Library/LaunchAgents/dev.cgc.test.plist',
+    ]);
   });
 
   it('kickstarts without -k when the service is already loaded', async () => {
     runner.loaded = true;
     await provider.startService();
-    expect(runner.launchctlCalls()).toEqual(['kickstart gui/501/dev.cgc.test']);
+    expect(runner.launchctlCalls()).toEqual(['enable gui/501/dev.cgc.test', 'kickstart gui/501/dev.cgc.test']);
   });
 
   it('accepts a bootstrap failure when another caller loaded the service meanwhile', async () => {
@@ -204,6 +202,11 @@ describe('NativeNeo4jProvider service commands', () => {
     runner.loaded = true;
     await provider.stopService();
     expect(runner.launchctlCalls()).toEqual(['bootout gui/501/dev.cgc.test']);
+  });
+
+  it('disables the service so launchd does not start it at login', async () => {
+    await provider.disableService();
+    expect(runner.launchctlCalls()).toEqual(['disable gui/501/dev.cgc.test']);
   });
 });
 
