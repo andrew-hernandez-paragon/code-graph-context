@@ -5,10 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.5.0] - Native Neo4j on macOS - 2026-10-16
+
+On a Mac with Homebrew, code-graph-context runs Neo4j natively under its own launchd agent, with no Docker, and an existing Docker graph moves over with one command that keeps every node, relationship, embedding and index. Docker remains the provider on Linux and Windows, and on request.
 
 ### Added
 
+- **`code-graph-context migrate-from-docker`** moves the graph from the Docker container into the native Neo4j. It records the source counts, stops the container and turns off its restart, dumps it, upgrades the store through a throwaway `neo4j:5.26` container when the source is older (Neo4j requires every upgrade from before 5.26 to pass through 5.26), loads it into the native Neo4j, and compares nodes, relationships, per-label counts and every index before switching the provider. The container and its volume are only stopped, never deleted, and `--rollback` brings the Docker graph back. `--from-dump <dir>` reuses an existing dump. Rehearsed on a copy of a 307,643-node graph: counts, all 17 indexes and vector search results matched, in 63 s. (`src/cli/migrate-from-docker.ts`)
 - **Native Neo4j provider for macOS with Homebrew.** `init` installs `neo4j` if missing, generates a config from the installed stock `neo4j.conf` plus a managed block (127.0.0.1 listeners, heap, page cache, small transaction logs, APOC unrestricted, `db.query.default_language=CYPHER_5`), copies the APOC core jar, sets the initial password, and runs Neo4j under the launchd agent `dev.code-graph-context.neo4j` with its own conf, plugins and data in `~/.local/share/code-graph-context/neo4j`. Homebrew upgrades replace only the binaries. `--native` and `--docker` force a provider; the default is native on macOS with Homebrew and Docker elsewhere. If the Docker container is running on the same ports, `init` leaves it alone. (`src/cli/neo4j-native.ts`)
 - **Provider record.** `init` writes `{ "neo4j": { "provider", "boltPort", "httpPort" } }` to `~/.config/code-graph-context/config.json` (directory overridable with `CGC_CONFIG_DIR`). (`src/cli/neo4j-provider-record.ts`)
 
@@ -18,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed Neo4j start no longer skips the startup steps for good.** The server retries every 30 s, up to 20 times, then runs the schema, migration, backfill and index steps. Previously one failed start skipped them until the next server start. (`src/mcp/service-init.ts`)
 - **Readiness and APOC checks use Bolt for both providers** instead of `docker exec cypher-shell`. (`src/cli/neo4j-bolt.ts`)
 - **`status` and `stop` follow the recorded provider.** `status` shows the provider, service state, Bolt reachability, APOC and the Neo4j version.
+- **The launchd agent is disabled while the Docker graph owns the ports**, after `init` and after a rollback, so a login never starts both Neo4j servers on the same ports. Starting the native service enables it again.
+
+### Upgrading
+
+From a Docker install on macOS:
+
+1. Install this version and run `code-graph-context init`. With the Docker graph still running it configures the native Neo4j, sets up the embedding server, and stops there.
+2. Stop the clients that use the graph, then run `code-graph-context migrate-from-docker`. The graph is offline while it dumps and loads, about a minute for a 2 GB store.
+3. Start your clients again. Nothing in their MCP configuration changes: the ports, user and password stay the same.
+
+`code-graph-context migrate-from-docker --rollback` returns to the Docker graph. Delete the container and the `code-graph-neo4j-data` volume yourself once you no longer need them.
 
 ## [5.4.1] - Smaller Transaction Logs - 2026-10-16
 

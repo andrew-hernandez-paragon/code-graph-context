@@ -677,7 +677,7 @@ code-graph-context stop             # Stop Neo4j (launchd service or container)
 - `--pagecache <size>` - Page cache size (default: 1G)
 - `-f, --force` - Recreate the container, or regenerate native config and restart (data is kept)
 
-If a Docker graph named `code-graph-neo4j` is already running on the same ports, native `init` configures but does not start Neo4j; it points to `code-graph-context migrate-from-docker`. Do not also run `brew services start neo4j`: it starts a second Neo4j without this config.
+If a Docker graph named `code-graph-neo4j` is already running on the same ports, native `init` configures but does not start Neo4j; it points to `code-graph-context migrate-from-docker`. That command moves the graph with every node, embedding and index, upgrading the store through Neo4j 5.26 on the way, and leaves the Docker container and volume stopped but intact; `code-graph-context migrate-from-docker --rollback` returns to them. Do not also run `brew services start neo4j`: it starts a second Neo4j without this config.
 
 ---
 
