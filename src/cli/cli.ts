@@ -18,6 +18,14 @@ import { Neo4jConnection, getNeo4jConnection } from '../storage/neo4j/neo4j-conn
 import { runEmbeddingsStart } from './embeddings-start.js';
 import { isApocAvailable, probeBolt, queryBolt, waitForBolt } from './neo4j-bolt.js';
 import {
+  Neo4jBoltClient,
+  NodeCommandRunner,
+  NodeMigrationFileSystem,
+  SystemClock,
+} from './migrate-from-docker-adapters.js';
+import { MigrateFromDockerOptions, resolveDataDirectory, runMigrateFromDocker } from './migrate-from-docker.js';
+import { createMigrationEnvironment } from './migration-environment.js';
+import {
   NEO4J_CONFIG,
   createContainer,
   getContainerPublishedPorts,
@@ -838,8 +846,31 @@ embeddings
     process.exit(await runEmbeddingsStart());
   });
 
+program
+  .command('migrate-from-docker')
+  .description(
+    'Move the Docker Neo4j graph into the native Neo4j, keeping nodes, relationships, properties and indexes',
+  )
+  .option('--container <name>', 'Docker container holding the graph', NEO4J_CONFIG.containerName)
+  .option('--from-dump <dir>', 'Use an existing 5.26 or newer dump directory instead of dumping the container')
+  .option('--overwrite', 'Replace data already in the native Neo4j')
+  .option('--rollback', 'Stop the native Neo4j and start the Docker container again')
+  .action(async (options: MigrateFromDockerOptions) => {
+    process.exit(
+      await runMigrateFromDocker(options, {
+        ...createMigrationEnvironment(),
+        commands: new NodeCommandRunner(),
+        bolt: new Neo4jBoltClient(),
+        files: new NodeMigrationFileSystem(),
+        clock: new SystemClock(),
+        output: (line) => console.log(line),
+        dataDirectory: resolveDataDirectory(process.env),
+      }),
+    );
+  });
+
 // Default action: start MCP server if no command given
-const knownCommands = ['init', 'status', 'stop', 'embeddings', 'help'];
+const knownCommands = ['init', 'status', 'stop', 'embeddings', 'migrate-from-docker', 'help'];
 const args = process.argv.slice(2);
 const hasCommand = args.some((arg) => knownCommands.includes(arg) || arg.startsWith('-'));
 
