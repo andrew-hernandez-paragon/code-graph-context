@@ -126,6 +126,10 @@ export const createContainer = (options: CreateContainerOptions = {}): boolean =
     `-e NEO4J_server_memory_heap_initial__size=1G`,
     `-e NEO4J_server_memory_heap_max__size=${memory}`,
     `-e NEO4J_server_memory_pagecache_size=${pagecache}`,
+    // A local code graph is rebuilt by reparsing, so keep only the logs crash recovery needs.
+    `-e NEO4J_db_tx__log_rotation_retention__policy=keep_none`,
+    `-e NEO4J_db_tx__log_rotation_size=64M`,
+    `-e NEO4J_db_tx__log_preallocate=false`,
     NEO4J_CONFIG.image,
   ].join(' ');
 
