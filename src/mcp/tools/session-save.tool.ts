@@ -8,10 +8,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { EmbeddingsService, getEmbeddingDimensions } from '../../core/embeddings/embeddings.service.js';
-import { saveSessionNoteChunks } from '../handlers/session-note-chunks.js';
 import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { saveSessionNoteChunks } from '../handlers/session-note-chunks.js';
 import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,16 @@ const CREATE_SESSION_NOTE_QUERY = `
     MERGE (bm)-[:HAS_NOTE]->(n)
   )
 
-  RETURN n.id AS noteId
+  // Mark the notes this one replaces, in the same transaction as the create
+  WITH n
+  UNWIND CASE WHEN size($supersedes) = 0 THEN [null] ELSE $supersedes END AS supersededId
+  OPTIONAL MATCH (old:SessionNote {id: supersededId, projectId: $projectId})
+  FOREACH (o IN CASE WHEN old IS NULL THEN [] ELSE [old] END | SET o.supersededBy = n.id)
+  WITH n,
+       collect(CASE WHEN old IS NOT NULL THEN supersededId END) AS markedIds,
+       collect(CASE WHEN old IS NULL THEN supersededId END) AS notFoundIds
+
+  RETURN n.id AS noteId, markedIds, notFoundIds
 `;
 
 const SET_NOTE_EMBEDDING_QUERY = `
@@ -156,7 +165,13 @@ export const createSessionSaveTool = (server: McpServer): void => {
           .nullable()
           .optional()
           .describe(
-            'Note ID that obsoletes this one. Recall filters out notes with non-null supersededBy by default. Use to tombstone a note that has a replacement, or to mark a note as outdated without a replacement (set to any non-null value).',
+            'Marks this new note as already superseded, so recall hides it by default. Set it to the id of the note that replaces it, or any non-null value. To replace older notes with this one, use supersedes instead.',
+          ),
+        supersedes: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'IDs of older notes this new note replaces. Each one found in the same project is marked supersededBy the new note, so recall hides it and returns the new note. The result lists which ids were marked and which were not found.',
           ),
         expiresInHours: z.number().optional().describe('Auto-expire note after N hours'),
         metadata: z
@@ -181,6 +196,7 @@ export const createSessionSaveTool = (server: McpServer): void => {
       severity = 'info',
       aboutNodeIds = [],
       supersededBy = null,
+      supersedes = [],
       expiresInHours,
       metadata,
     }) => {
@@ -244,6 +260,9 @@ export const createSessionSaveTool = (server: McpServer): void => {
         }
         if ((effectiveType === 'note' || effectiveType === 'both') && !category) {
           return createErrorResponse('category is required when saving a note.');
+        }
+        if (effectiveType === 'bookmark' && supersedes.length > 0) {
+          return createErrorResponse('supersedes applies only when saving a note.');
         }
 
         const result: Record<string, unknown> = { success: true, projectId: resolvedProjectId, sessionId, agentId };
@@ -334,6 +353,7 @@ export const createSessionSaveTool = (server: McpServer): void => {
             severity,
             aboutNodeIds,
             supersededBy,
+            supersedes: [...new Set(supersedes)],
             expiresAt,
           });
 
@@ -374,6 +394,9 @@ export const createSessionSaveTool = (server: McpServer): void => {
             hasEmbedding,
             chunkCount,
             expiresAt: expiresAt != null ? new Date(expiresAt).toISOString() : null,
+            ...(supersedes.length > 0 && {
+              supersedes: { marked: noteRows[0].markedIds, notFound: noteRows[0].notFoundIds },
+            }),
           };
         }
 

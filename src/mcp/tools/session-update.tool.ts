@@ -13,8 +13,9 @@
  *   - aboutNodeIds resync (file moved / symbol renamed)
  *   - tombstoning (set supersededBy to any non-null value)
  *
- * Use session_save with `supersededBy: <oldId>` for substantive content
- * changes or decision reversals — that preserves history as a new note.
+ * Use session_save with `supersedes: [<oldId>]` for substantive content
+ * changes or decision reversals: that preserves history as a new note and
+ * marks the old one superseded by it.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';

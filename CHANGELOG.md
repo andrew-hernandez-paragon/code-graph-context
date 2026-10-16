@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`session_save` takes `supersedes: string[]`**, the ids of older notes the new note replaces. In the same transaction as the create, each listed note in the same project gets `supersededBy` set to the new note's id, so recall hides it and returns the new note. The response's `note.supersedes` lists the ids it `marked` and the ids it did not find (`notFound`), including ids from another project. Passing `supersedes` on a bookmark-only save is rejected. (`src/mcp/tools/session-save.tool.ts`)
+
+### Fixed
+
+- **The supersession guidance hid the replacement note.** The `session_update` description and header told callers to save the replacement with `supersededBy: <oldId>`, but `supersededBy` on save marks the new note itself as superseded, so recall hid the replacement and kept returning the old note. The guidance now teaches `supersedes`, and the `supersededBy` parameter says what it does. Pairs saved the old way stay as they are; fix one with `session_update` by clearing `supersededBy` on the new note and setting it on the old one. (`src/mcp/constants.ts`, `src/mcp/tools/session-update.tool.ts`)
+
 ## [5.3.0] - Embedding Provenance, Evidence Preservation and Windows Support - 2026-09-08
 
 Pins local embeddings to one known model, stops traversal and impact analysis from silently discarding evidence, makes session-note chunks survive a reparse, and unblocks the server on Windows.

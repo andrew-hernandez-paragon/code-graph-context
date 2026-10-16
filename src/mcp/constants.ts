@@ -200,7 +200,7 @@ Question polling: pass types=['question'] to find unanswered questions. Askers p
   },
   [TOOL_NAMES.sessionSave]: {
     title: 'Session Save',
-    description: `Session persistence tool. Save session context — auto-detects bookmark vs note based on input. Provide workingSetNodeIds for a bookmark, topic+content for a note, or both for a bookmark with an attached note.`,
+    description: `Session persistence tool. Save session context: auto-detects bookmark vs note based on input. Provide workingSetNodeIds for a bookmark, topic+content for a note, or both for a bookmark with an attached note. To replace older notes, pass supersedes with their ids: the new note stays current and each old note is marked superseded by it.`,
   },
   [TOOL_NAMES.sessionRecall]: {
     title: 'Session Recall',
@@ -208,7 +208,7 @@ Question polling: pass types=['question'] to find unanswered questions. Askers p
   },
   [TOOL_NAMES.sessionUpdate]: {
     title: 'Session Update',
-    description: `Session persistence tool. In-place revision of an existing SessionNote — typo fix, severity change, lastValidated bump, minor content correction, aboutNodeIds resync, or supersession marker. For substantive content changes or decision reversals, prefer session_save with supersededBy set so history is preserved as a new note.`,
+    description: `Session persistence tool. In-place revision of an existing SessionNote: typo fix, severity change, lastValidated bump, minor content correction, aboutNodeIds resync, or supersession marker. For substantive content changes or decision reversals, prefer session_save with supersedes: [<oldId>], which preserves history as a new note and marks the old one superseded by it.`,
   },
   [TOOL_NAMES.swarmMessage]: {
     title: 'Swarm Message',
