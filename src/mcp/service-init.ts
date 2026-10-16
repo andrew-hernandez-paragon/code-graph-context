@@ -6,7 +6,6 @@
 import fs from 'fs/promises';
 import { join } from 'path';
 
-import { ensureNeo4jRunning, isDockerInstalled, isDockerRunning } from '../cli/neo4j-docker.js';
 import {
   EmbeddingsService,
   isOpenAIEnabled,
@@ -19,6 +18,7 @@ import { LIST_PROJECTS_QUERY } from '../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../storage/neo4j/neo4j.service.js';
 
 import { FILE_PATHS, LOG_CONFIG } from './constants.js';
+import { STARTUP_RETRY_INTERVAL_MS, createNeo4jStartupService, retryInBackground } from './neo4j-startup.js';
 import { initializeNaturalLanguageService } from './tools/natural-language-to-cypher.tool.js';
 import { debugLog } from './utils.js';
 
@@ -71,48 +71,47 @@ const checkConfiguration = async (): Promise<void> => {
   }
 };
 
+const logInfo = (message: string): void => {
+  console.error(JSON.stringify({ level: 'info', message: `[code-graph-context] ${message}` }));
+};
+
+const describeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+const logError = (message: string): void => {
+  console.error(JSON.stringify({ level: 'error', message: `[code-graph-context] ${message}` }));
+};
+
 /**
- * Ensure Neo4j is running - auto-start if Docker available, fail if not
+ * Ensure Neo4j answers on Bolt, starting the recorded provider if it does not
  */
 const ensureNeo4j = async (): Promise<void> => {
-  // Check if Docker is available
-  if (!isDockerInstalled()) {
-    const msg = 'Docker not installed. Install Docker or run: code-graph-context init';
-    console.error(JSON.stringify({ level: 'error', message: `[code-graph-context] ${msg}` }));
-    throw new Error(msg);
+  const action = await createNeo4jStartupService().ensureRunning();
+
+  if (action === 'docker-created') logInfo('Neo4j container created and started');
+  else if (action === 'docker-started') logInfo('Neo4j container started');
+  else if (action === 'native-started') logInfo('Native Neo4j service started');
+
+  await debugLog('Neo4j ready', { action });
+};
+
+/**
+ * Keep trying the Neo4j step after a failed start, then run the steps that need it.
+ * Not awaited by the caller: the MCP server is already serving.
+ */
+const retryNeo4jStartup = async (): Promise<void> => {
+  const recovered = await retryInBackground({
+    attempt: ensureNeo4j,
+    onAttempt: (attempt, maxAttempts) =>
+      logInfo(
+        `Retrying Neo4j startup (attempt ${attempt} of ${maxAttempts}, every ${STARTUP_RETRY_INTERVAL_MS / 1000}s)`,
+      ),
+    onFailure: (attempt, error) => logError(`Neo4j startup attempt ${attempt} failed: ${describeError(error)}`),
+  });
+  if (!recovered) {
+    logError('Neo4j startup retries exhausted. Start Neo4j or run: code-graph-context init');
+    return;
   }
-
-  if (!isDockerRunning()) {
-    const msg = 'Docker not running. Start Docker or run: code-graph-context init';
-    console.error(JSON.stringify({ level: 'error', message: `[code-graph-context] ${msg}` }));
-    throw new Error(msg);
-  }
-
-  const result = await ensureNeo4jRunning();
-
-  if (!result.success) {
-    const msg = `Neo4j failed to start: ${result.error}. Run: code-graph-context init`;
-    console.error(JSON.stringify({ level: 'error', message: `[code-graph-context] ${msg}` }));
-    throw new Error(msg);
-  }
-
-  if (result.action === 'created') {
-    console.error(
-      JSON.stringify({
-        level: 'info',
-        message: '[code-graph-context] Neo4j container created and started',
-      }),
-    );
-  } else if (result.action === 'started') {
-    console.error(
-      JSON.stringify({
-        level: 'info',
-        message: '[code-graph-context] Neo4j container started',
-      }),
-    );
-  }
-
-  await debugLog('Neo4j ready', result);
+  await initializeNeo4jDependentServices();
 };
 
 /**
@@ -122,9 +121,20 @@ export const initializeServices = async (): Promise<void> => {
   // Check for missing configuration (non-fatal warnings)
   await checkConfiguration();
 
-  // Ensure Neo4j is running (fatal if not)
-  await ensureNeo4j();
+  try {
+    await ensureNeo4j();
+  } catch (error) {
+    logError(describeError(error));
+    void retryNeo4jStartup().catch((retryError) =>
+      logError(`Service initialization failed: ${describeError(retryError)}`),
+    );
+    return;
+  }
 
+  await initializeNeo4jDependentServices();
+};
+
+const initializeNeo4jDependentServices = async (): Promise<void> => {
   // Initialize services sequentially - schema must be written before NL service reads it
   await initializeNeo4jSchema();
 
