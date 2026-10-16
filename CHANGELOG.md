@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.1] - Smaller Transaction Logs - 2026-10-16
+
+### Changed
+
+- **`init` keeps only the transaction logs crash recovery needs.** New containers get `db.tx_log.rotation.retention_policy=keep_none`, `db.tx_log.rotation.size=64M` and `db.tx_log.preallocate=false`. Neo4j's defaults keep two days of 256 MB log files, each allocated at full size when it opens, which only an incremental backup reads. A local code graph is rebuilt by reparsing, so those logs cost disk for nothing; one measured graph held 1 GB of them. (`src/cli/neo4j-docker.ts`)
+
+### Upgrading
+
+Docker fixes a container's settings when it is created, and Neo4j Community cannot change them at runtime, so an existing container keeps the old logs until it is recreated. Run `code-graph-context init --force`, with the same `--memory` and `--pagecache` you use today: it removes the container, keeps the `code-graph-neo4j-data` volume with your graph, and creates a container with the new settings. Check the settings with `SHOW SETTINGS YIELD name, value WHERE name STARTS WITH 'db.tx_log'`.
+
 ## [5.4.0] - Note Supersession and a Shared Embedding Server - 2026-10-16
 
 Lets a new note replace older ones in one call, stops every server start from rewriting all notes, and lets any process start the local embedding server and keep it alive while it uses it.
