@@ -156,35 +156,33 @@ export const initializeServices = async (): Promise<void> => {
 
 /**
  * Backfill SessionNote properties added in Phase 1.3:
- *   - aboutNodeIds  — recovered from existing :ABOUT edges so the post-parse
- *                     edge recovery (Phase 1.4) can re-link after a reparse.
- *   - lastValidated — defaults to createdAt for old notes; subsequent saves /
- *                     updates bump it to timestamp().
- *   - supersededBy  — defaults to null. Single signal for "is this current?";
- *                     non-null filters the note out of default recall results.
+ *   - aboutNodeIds: recovered from existing :ABOUT edges so the post-parse
+ *     edge recovery (Phase 1.4) can re-link after a reparse.
+ *   - lastValidated: defaults to createdAt for old notes; subsequent saves /
+ *     updates bump it to timestamp().
  *
- * Idempotent via coalesce — only writes properties that are currently NULL.
+ * supersededBy is not matched: Neo4j stores no property for null, so every
+ * current note lacks it and the match would select every note on every start.
+ *
+ * Idempotent via coalesce: only writes properties that are currently NULL.
  * Subsequent startups touch zero rows once all notes are migrated.
  */
+export const MIGRATE_SESSION_NOTE_PROPERTIES_QUERY = `
+  MATCH (n:SessionNote)
+  WHERE n.aboutNodeIds IS NULL
+     OR n.lastValidated IS NULL
+  OPTIONAL MATCH (n)-[:ABOUT]->(target)
+  WITH n, collect(DISTINCT target.id) AS resolvedAboutNodeIds
+  SET n.aboutNodeIds  = coalesce(n.aboutNodeIds, resolvedAboutNodeIds),
+      n.lastValidated = coalesce(n.lastValidated, n.createdAt)
+  RETURN count(n) AS migrated
+`;
+
 const migrateSessionNoteProperties = async (): Promise<void> => {
   try {
     const neo4jService = new Neo4jService();
     try {
-      const result = await neo4jService.run(
-        `
-          MATCH (n:SessionNote)
-          WHERE n.aboutNodeIds IS NULL
-             OR n.lastValidated IS NULL
-             OR n.supersededBy IS NULL
-          OPTIONAL MATCH (n)-[:ABOUT]->(target)
-          WITH n, collect(DISTINCT target.id) AS resolvedAboutNodeIds
-          SET n.aboutNodeIds  = coalesce(n.aboutNodeIds, resolvedAboutNodeIds),
-              n.lastValidated = coalesce(n.lastValidated, n.createdAt),
-              n.supersededBy  = coalesce(n.supersededBy, null)
-          RETURN count(n) AS migrated
-        `,
-        {},
-      );
+      const result = await neo4jService.run(MIGRATE_SESSION_NOTE_PROPERTIES_QUERY, {});
       const migrated = result[0]?.migrated;
       const count =
         typeof migrated === 'object' && migrated && 'toNumber' in migrated

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The supersession guidance hid the replacement note.** The `session_update` description and header told callers to save the replacement with `supersededBy: <oldId>`, but `supersededBy` on save marks the new note itself as superseded, so recall hid the replacement and kept returning the old note. The guidance now teaches `supersedes`, and the `supersededBy` parameter says what it does. Pairs saved the old way stay as they are; fix one with `session_update` by clearing `supersededBy` on the new note and setting it on the old one. (`src/mcp/constants.ts`, `src/mcp/tools/session-update.tool.ts`)
+- **The startup SessionNote migration no longer rewrites every note.** Its match included `n.supersededBy IS NULL`, which is true for every note without the property, so each start rewrote every current note and logged it as a migration. It now selects only notes missing `aboutNodeIds` or `lastValidated`, so a migrated graph logs nothing. (`src/mcp/service-init.ts`)
 
 ## [5.3.0] - Embedding Provenance, Evidence Preservation and Windows Support - 2026-09-08
 
