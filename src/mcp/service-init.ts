@@ -152,6 +152,9 @@ const initializeNeo4jDependentServices = async (): Promise<void> => {
   // no reparse and no re-embed is needed.
   await ensureCodeFulltextIndex();
 
+  // Graphs parsed before these indexes existed only get them here, not from a reparse.
+  await ensureCodeNodeLookupIndexes();
+
   if (isOpenAIAvailable()) {
     await initializeNaturalLanguageService();
   } else {
@@ -244,6 +247,22 @@ const ensureCodeFulltextIndex = async (): Promise<void> => {
     }
   } catch (error) {
     await debugLog('Failed to ensure code fulltext index', error);
+  }
+};
+
+const ensureCodeNodeLookupIndexes = async (): Promise<void> => {
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      await neo4jService.run(QUERIES.CREATE_PROJECT_ID_INDEX_GRAPHNODE);
+      await neo4jService.run(QUERIES.CREATE_PROJECT_FILEPATH_INDEX_GRAPHNODE);
+      await neo4jService.run(QUERIES.CREATE_PROJECT_NAME_INDEX_GRAPHNODE);
+      await debugLog('Code node lookup indexes ensured');
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    await debugLog('Failed to ensure code node lookup indexes', error);
   }
 };
 
