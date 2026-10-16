@@ -78,17 +78,13 @@ const DROP_ABOUT_EDGES_QUERY = `
 `;
 
 /**
- * Recreate :ABOUT edges from the note to its current aboutNodeIds. Same guard
- * pattern as session-save: filter out coordination labels from targets.
+ * Recreate :ABOUT edges from the note to its current aboutNodeIds. Targets
+ * match :GraphNode, which excludes session and coordination nodes.
  */
-const RECREATE_NOTE_ABOUT_EDGES_QUERY = `
+export const RECREATE_NOTE_ABOUT_EDGES_QUERY = `
   MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
   UNWIND $aboutNodeIds AS aboutId
-  MATCH (target {id: aboutId, projectId: $projectId})
-  WHERE NOT target:SessionNote
-    AND NOT target:SessionBookmark
-    AND NOT target:Pheromone
-    AND NOT target:SwarmTask
+  MATCH (target:GraphNode {id: aboutId, projectId: $projectId})
   MERGE (n)-[r:ABOUT]->(target)
   RETURN count(r) AS created
 `;

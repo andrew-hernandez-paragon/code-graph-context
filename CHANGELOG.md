@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Node lookups by id, file path and note reference use indexes.** Queries like `MATCH (n {id: $id, projectId: $p})` had no label, so Neo4j planned an AllNodesScan over every node in the database (307,643 here). They now match `:GraphNode` with the id or file path in the pattern and seek `project_id_graphnode_idx` or the new `project_filepath_graphnode_idx`. Measured on the live 307,643-node graph, same parameters before and after: node by id 129 ms to 2 ms, file node ids 103 ms to 1 ms, node impact 118 ms to 2 ms, transitive dependents 316 ms to 3 ms, cross-file edges before a reparse 111 ms to 3 ms, pheromone target lookup in `swarm_sense` and `query_signals` 527 ms to 3 ms, and the stale `aboutNodeIds` count run after every parse 19,657 ms to 5 ms. The file delete, the edge recreation after a reparse, and the targets of `session_save`, `session_note`, `session_bookmark`, `session_update`, `swarm_pheromone` and `swarm_post_task` also seek instead of scan. The `NOT target:SessionNote ...` guards on those targets are gone because `:GraphNode` already excludes session and coordination nodes. (`src/storage/neo4j/neo4j.service.ts`, `src/mcp/tools/`, `src/mcp/handlers/traversal.handler.ts`)
+
+### Added
+
+- **Two `GraphNode` indexes**, `project_filepath_graphnode_idx` on `(projectId, filePath)` and `project_name_graphnode_idx` on `(projectId, name)`, created with the existing project indexes on each parse. (`src/storage/neo4j/neo4j.service.ts`, `src/mcp/handlers/graph-generator.handler.ts`)
+
 ## [5.5.0] - Native Neo4j on macOS - 2026-10-16
 
 On a Mac with Homebrew, code-graph-context runs Neo4j natively under its own launchd agent, with no Docker, and an existing Docker graph moves over with one command that keeps every node, relationship, embedding and index. Docker remains the provider on Linux and Windows, and on request.

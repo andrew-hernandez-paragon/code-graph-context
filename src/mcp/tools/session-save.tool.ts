@@ -18,7 +18,7 @@ import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, de
 // Cypher queries (copied from their respective source tools)
 // ---------------------------------------------------------------------------
 
-const CREATE_BOOKMARK_QUERY = `
+export const CREATE_BOOKMARK_QUERY = `
   CREATE (b:SessionBookmark {
     id: $bookmarkId,
     projectId: $projectId,
@@ -34,15 +34,11 @@ const CREATE_BOOKMARK_QUERY = `
     updatedAt: timestamp()
   })
 
-  // Link to referenced code nodes (exclude coordination nodes)
+  // Link to referenced code nodes (:GraphNode excludes coordination nodes)
   WITH b
-  OPTIONAL MATCH (target)
+  OPTIONAL MATCH (target:GraphNode)
   WHERE target.id IN $workingSetNodeIds
     AND target.projectId = $projectId
-    AND NOT target:Pheromone
-    AND NOT target:SwarmTask
-    AND NOT target:SessionBookmark
-    AND NOT target:SessionNote
   WITH b, collect(DISTINCT target) AS targets
   FOREACH (t IN targets | MERGE (b)-[:REFERENCES]->(t))
 
@@ -55,7 +51,7 @@ const CREATE_BOOKMARK_QUERY = `
          size(targets) AS linkedNodes
 `;
 
-const CREATE_SESSION_NOTE_QUERY = `
+export const CREATE_SESSION_NOTE_QUERY = `
   // Create the SessionNote node
   CREATE (n:SessionNote {
     id: $noteId,
@@ -73,17 +69,10 @@ const CREATE_SESSION_NOTE_QUERY = `
     expiresAt: $expiresAt
   })
 
-  // Link to referenced code nodes (filter out internal coordination nodes)
+  // Link to referenced code nodes (:GraphNode excludes coordination nodes)
   WITH n
   UNWIND CASE WHEN size($aboutNodeIds) = 0 THEN [null] ELSE $aboutNodeIds END AS aboutNodeId
-  OPTIONAL MATCH (target)
-  WHERE aboutNodeId IS NOT NULL
-    AND target.id = aboutNodeId
-    AND target.projectId = $projectId
-    AND NOT target:SessionNote
-    AND NOT target:SessionBookmark
-    AND NOT target:Pheromone
-    AND NOT target:SwarmTask
+  OPTIONAL MATCH (target:GraphNode {id: aboutNodeId, projectId: $projectId})
   WITH n, collect(target) AS targets
   FOREACH (t IN [x IN targets WHERE x IS NOT NULL] | MERGE (n)-[:ABOUT]->(t))
 

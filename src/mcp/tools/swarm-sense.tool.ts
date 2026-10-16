@@ -17,7 +17,7 @@ import { PHEROMONE_TYPES } from './swarm-constants.js';
  * Uses nodeId-based matching (self-healing) instead of [:MARKS] relationship
  * This survives graph rebuilds since nodeIds are deterministic
  */
-const SENSE_PHEROMONES_QUERY = `
+export const SENSE_PHEROMONES_QUERY = `
   // Match pheromones scoped to project, optionally filtering by type
   MATCH (p:Pheromone)
   WHERE p.projectId = $projectId
@@ -39,8 +39,7 @@ const SENSE_PHEROMONES_QUERY = `
   WHERE currentIntensity >= $minIntensity
 
   // Find target by nodeId (self-healing - survives graph rebuilds)
-  OPTIONAL MATCH (target)
-  WHERE target.id = p.nodeId AND target.projectId = p.projectId
+  OPTIONAL MATCH (target:GraphNode {id: p.nodeId, projectId: p.projectId})
 
   // Return pheromone data
   RETURN

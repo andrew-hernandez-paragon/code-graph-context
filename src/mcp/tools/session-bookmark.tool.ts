@@ -20,7 +20,7 @@ import {
 /**
  * Neo4j query to create a SessionBookmark node and link to code nodes
  */
-const CREATE_BOOKMARK_QUERY = `
+export const CREATE_BOOKMARK_QUERY = `
   CREATE (b:SessionBookmark {
     id: $bookmarkId,
     projectId: $projectId,
@@ -36,15 +36,11 @@ const CREATE_BOOKMARK_QUERY = `
     updatedAt: timestamp()
   })
 
-  // Link to referenced code nodes (exclude coordination nodes)
+  // Link to referenced code nodes (:GraphNode excludes coordination nodes)
   WITH b
-  OPTIONAL MATCH (target)
+  OPTIONAL MATCH (target:GraphNode)
   WHERE target.id IN $workingSetNodeIds
     AND target.projectId = $projectId
-    AND NOT target:Pheromone
-    AND NOT target:SwarmTask
-    AND NOT target:SessionBookmark
-    AND NOT target:SessionNote
   WITH b, collect(DISTINCT target) AS targets
   FOREACH (t IN targets | MERGE (b)-[:REFERENCES]->(t))
 

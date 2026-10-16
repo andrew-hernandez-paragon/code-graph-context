@@ -17,13 +17,10 @@ import { TASK_PRIORITIES, TASK_TYPES, TaskPriority, generateTaskId } from './swa
  * Query to get node IDs for a file path (fallback when no nodeIds provided)
  * Uses ENDS WITH for flexible matching (handles absolute vs relative paths)
  */
-const GET_NODES_FOR_FILE_QUERY = `
-  MATCH (n)
+export const GET_NODES_FOR_FILE_QUERY = `
+  MATCH (n:GraphNode {projectId: $projectId})
   WHERE (n.filePath = $filePath OR n.filePath ENDS WITH $filePath)
-    AND n.projectId = $projectId
     AND n.id IS NOT NULL
-    AND NOT n:Pheromone
-    AND NOT n:SwarmTask
   RETURN n.id AS id
   ORDER BY n.startLine
   LIMIT 20
@@ -32,7 +29,7 @@ const GET_NODES_FOR_FILE_QUERY = `
 /**
  * Neo4j query to create a new SwarmTask node
  */
-const CREATE_TASK_QUERY = `
+export const CREATE_TASK_QUERY = `
   // Create the task node
   CREATE (t:SwarmTask {
     id: $taskId,
@@ -55,11 +52,9 @@ const CREATE_TASK_QUERY = `
 
   // Link to target code nodes if they exist
   WITH t
-  OPTIONAL MATCH (target)
+  OPTIONAL MATCH (target:GraphNode)
   WHERE target.id IN $targetNodeIds
     AND target.projectId = $projectId
-    AND NOT target:SwarmTask
-    AND NOT target:Pheromone
   WITH t, collect(DISTINCT target) as targets
   FOREACH (target IN targets | MERGE (t)-[:TARGETS]->(target))
 

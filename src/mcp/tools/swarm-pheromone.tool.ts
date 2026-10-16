@@ -32,12 +32,9 @@ const CLEANUP_WORKFLOW_STATES_QUERY = `
 /**
  * Neo4j query to create or update a pheromone
  */
-const CREATE_PHEROMONE_QUERY = `
-  // Find the target code node (exclude other pheromones)
-  MATCH (target)
-  WHERE target.id = $nodeId
-    AND target.projectId = $projectId
-    AND NOT target:Pheromone
+export const CREATE_PHEROMONE_QUERY = `
+  // Find the target code node
+  MATCH (target:GraphNode {id: $nodeId, projectId: $projectId})
   WITH target
   LIMIT 1
 

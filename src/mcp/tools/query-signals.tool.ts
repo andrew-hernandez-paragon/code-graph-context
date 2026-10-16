@@ -139,7 +139,7 @@ const RECENT_NOTES_FOR_SIGNALS = `
  * intensity. Query string is ignored — pheromones aren't vector-indexed.
  * 0013: uses IN $projectIds.
  */
-const SENSE_PHEROMONES_FOR_SIGNALS = `
+export const SENSE_PHEROMONES_FOR_SIGNALS = `
   MATCH (p:Pheromone)
   WHERE p.projectId IN $projectIds
   WITH p,
@@ -149,8 +149,7 @@ const SENSE_PHEROMONES_FOR_SIGNALS = `
     END AS currentIntensity
   WHERE currentIntensity >= $minIntensity
 
-  OPTIONAL MATCH (target)
-  WHERE target.id = p.nodeId AND target.projectId = p.projectId
+  OPTIONAL MATCH (target:GraphNode {id: p.nodeId, projectId: p.projectId})
 
   RETURN
     p.id AS id,

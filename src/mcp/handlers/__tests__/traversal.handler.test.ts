@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+
 import type { Neo4jService } from '../../../storage/neo4j/neo4j.service.js';
 import { TraversalHandler } from '../traversal.handler.js';
 
@@ -79,4 +80,12 @@ describe('weighted traversal', () => {
       expect(run.mock.calls[1][1].relationshipTypes).toEqual(['CALLS']);
     },
   );
+});
+
+describe('start node lookup', () => {
+  it('matches the start node by GraphNode label so the id index is used', async () => {
+    const run = vi.fn().mockResolvedValueOnce([]);
+    await handlerWith(run).traverseFromNode('start', [0.1, 0.2], { projectId: 'proj_test' });
+    expect(run.mock.calls[0][0]).toContain('MATCH (n:GraphNode {id: $nodeId, projectId: $projectId})');
+  });
 });

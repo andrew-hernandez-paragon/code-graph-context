@@ -168,6 +168,10 @@ export const QUERIES = {
   // Create composite index on GraphNode for efficient edge resolution lookups
   CREATE_PROJECT_ID_INDEX_GRAPHNODE:
     'CREATE INDEX project_id_graphnode_idx IF NOT EXISTS FOR (n:GraphNode) ON (n.projectId, n.id)',
+  CREATE_PROJECT_FILEPATH_INDEX_GRAPHNODE:
+    'CREATE INDEX project_filepath_graphnode_idx IF NOT EXISTS FOR (n:GraphNode) ON (n.projectId, n.filePath)',
+  CREATE_PROJECT_NAME_INDEX_GRAPHNODE:
+    'CREATE INDEX project_name_graphnode_idx IF NOT EXISTS FOR (n:GraphNode) ON (n.projectId, n.name)',
 
   // Create index on normalizedHash for efficient structural duplicate detection
   CREATE_NORMALIZED_HASH_INDEX: 'CREATE INDEX normalized_hash_idx IF NOT EXISTS FOR (n:Embedded) ON (n.normalizedHash)',
@@ -350,7 +354,7 @@ export const QUERIES = {
   // These will be recreated after import using deterministic IDs
   // Uses filePath matching instead of relationship traversal to avoid following INJECTS/IMPORTS
   GET_CROSS_FILE_EDGES: `
-    MATCH (n)
+    MATCH (n:GraphNode)
     WHERE n.filePath IN $filePaths AND n.projectId = $projectId
     WITH collect(DISTINCT n) AS nodesToDelete
     UNWIND nodesToDelete AS node
@@ -367,7 +371,7 @@ export const QUERIES = {
   // Uses filePath matching to delete only nodes belonging to the specified files
   // Avoids following INJECTS/IMPORTS edges which would delete nodes from other files
   DELETE_SOURCE_FILE_SUBGRAPHS: `
-    MATCH (n)
+    MATCH (n:GraphNode)
     WHERE n.filePath IN $filePaths AND n.projectId = $projectId
     DETACH DELETE n
   `,
@@ -375,10 +379,8 @@ export const QUERIES = {
   // Recreate cross-file edges after import (uses deterministic IDs)
   RECREATE_CROSS_FILE_EDGES: `
     UNWIND $edges AS edge
-    MATCH (startNode {id: edge.startNodeId})
-    WHERE startNode.projectId = $projectId
-    MATCH (endNode {id: edge.endNodeId})
-    WHERE endNode.projectId = $projectId
+    MATCH (startNode:GraphNode {id: edge.startNodeId, projectId: $projectId})
+    MATCH (endNode:GraphNode {id: edge.endNodeId, projectId: $projectId})
     CALL apoc.create.relationship(startNode, edge.edgeType, edge.edgeProperties, endNode) YIELD rel
     RETURN count(rel) AS recreatedCount
   `,
@@ -390,19 +392,15 @@ export const QUERIES = {
   // :MARKS edges to those code nodes were dropped by DETACH DELETE; recreate
   // them by matching the new code nodes against the persisted ID arrays.
   //
-  // All queries are MERGE-based and idempotent. Filter out other session/
-  // coordination labels in the target match — same guard as session-save.
+  // All queries are MERGE-based and idempotent. Targets match :GraphNode, which
+  // excludes the session and coordination labels.
 
   // SessionNote -[:ABOUT]-> code  (uses aboutNodeIds property added in 1.3)
   RECREATE_ABOUT_EDGES: `
     MATCH (n:SessionNote {projectId: $projectId})
     WHERE n.aboutNodeIds IS NOT NULL AND size(n.aboutNodeIds) > 0
     UNWIND n.aboutNodeIds AS aboutId
-    MATCH (target {id: aboutId, projectId: $projectId})
-    WHERE NOT target:SessionNote
-      AND NOT target:SessionBookmark
-      AND NOT target:Pheromone
-      AND NOT target:SwarmTask
+    MATCH (target:GraphNode {id: aboutId, projectId: $projectId})
     MERGE (n)-[r:ABOUT]->(target)
     RETURN count(r) AS recreated
   `,
@@ -412,11 +410,7 @@ export const QUERIES = {
     MATCH (b:SessionBookmark {projectId: $projectId})
     WHERE b.workingSetNodeIds IS NOT NULL AND size(b.workingSetNodeIds) > 0
     UNWIND b.workingSetNodeIds AS targetId
-    MATCH (target {id: targetId, projectId: $projectId})
-    WHERE NOT target:SessionNote
-      AND NOT target:SessionBookmark
-      AND NOT target:Pheromone
-      AND NOT target:SwarmTask
+    MATCH (target:GraphNode {id: targetId, projectId: $projectId})
     MERGE (b)-[r:REFERENCES]->(target)
     RETURN count(r) AS recreated
   `,
@@ -428,11 +422,7 @@ export const QUERIES = {
   RECREATE_MARKS_EDGES: `
     MATCH (p:Pheromone {projectId: $projectId})
     WHERE p.nodeId IS NOT NULL
-    MATCH (target {id: p.nodeId, projectId: $projectId})
-    WHERE NOT target:Pheromone
-      AND NOT target:SessionNote
-      AND NOT target:SessionBookmark
-      AND NOT target:SwarmTask
+    MATCH (target:GraphNode {id: p.nodeId, projectId: $projectId})
     MERGE (p)-[r:MARKS]->(target)
     RETURN count(r) AS recreated
   `,
@@ -444,7 +434,7 @@ export const QUERIES = {
     MATCH (n:SessionNote {projectId: $projectId})
     WHERE n.aboutNodeIds IS NOT NULL AND size(n.aboutNodeIds) > 0
     UNWIND n.aboutNodeIds AS aboutId
-    OPTIONAL MATCH (target {id: aboutId, projectId: $projectId})
+    OPTIONAL MATCH (target:GraphNode {id: aboutId, projectId: $projectId})
     WITH n.id AS noteId, aboutId, target
     WHERE target IS NULL
     RETURN count(*) AS staleCount
@@ -460,7 +450,7 @@ export const QUERIES = {
   // NOTE: Using property-based query instead of path traversal to avoid Cartesian explosion
   // The old query `MATCH (sf:SourceFile)-[*]->(n)` caused OOM with large graphs
   GET_EXISTING_NODES_FOR_EDGE_DETECTION: `
-    MATCH (n)
+    MATCH (n:GraphNode)
     WHERE n.projectId = $projectId
       AND n.filePath IS NOT NULL
       AND NOT n.filePath IN $excludeFilePaths
@@ -516,7 +506,7 @@ export const QUERIES = {
     const matchPattern = isReversed ? `(connected)${relPattern}(start)` : `(start)${relPattern}(connected)`;
 
     return `
-      MATCH (start) WHERE start.id = $nodeId AND start.projectId = $projectId
+      MATCH (start:GraphNode {id: $nodeId, projectId: $projectId})
 
       CALL {
         WITH start
@@ -617,7 +607,7 @@ export const QUERIES = {
     return `
       // Unwind the source nodes we're exploring from
       UNWIND $sourceNodeIds AS sourceId
-      MATCH (source) WHERE source.id = sourceId AND source.projectId = $projectId
+      MATCH (source:GraphNode {id: sourceId, projectId: $projectId})
 
       // Find immediate neighbors (exactly 1 hop)
       MATCH (source)${relPattern}(neighbor)
@@ -771,7 +761,7 @@ export const QUERIES = {
    * Get node details by ID
    */
   GET_NODE_BY_ID: `
-    MATCH (n) WHERE n.id = $nodeId AND n.projectId = $projectId
+    MATCH (n:GraphNode {id: $nodeId, projectId: $projectId})
     RETURN n.id AS id,
            n.name AS name,
            labels(n) AS labels,
@@ -785,7 +775,7 @@ export const QUERIES = {
    * Based on GET_CROSS_FILE_EDGES pattern but for a single node
    */
   GET_NODE_IMPACT: `
-    MATCH (target) WHERE target.id = $nodeId AND target.projectId = $projectId
+    MATCH (target:GraphNode {id: $nodeId, projectId: $projectId})
     MATCH (dependent)-[r]->(target)
     WHERE dependent.id <> target.id AND dependent.projectId = $projectId
     RETURN DISTINCT
@@ -800,14 +790,13 @@ export const QUERIES = {
   `,
 
   GET_FILE_NODE_IDS: `
-    MATCH (n)
-    WHERE n.projectId = $projectId AND n.filePath = $filePath
-      AND n.coreType IS NOT NULL
+    MATCH (n:GraphNode {projectId: $projectId, filePath: $filePath})
+    WHERE n.coreType IS NOT NULL
     RETURN n.id AS nodeId
   `,
 
   GET_NODES_IMPACT: `
-    MATCH (target) WHERE target.id IN $nodeIds AND target.projectId = $projectId
+    MATCH (target:GraphNode) WHERE target.id IN $nodeIds AND target.projectId = $projectId
     MATCH (dependent)-[r]->(target)
     WHERE dependent.projectId = $projectId AND dependent.coreType IS NOT NULL
       AND NOT dependent.id IN $nodeIds
@@ -821,7 +810,7 @@ export const QUERIES = {
   `,
 
   GET_NODES_TRANSITIVE_DEPENDENTS: (maxDepth: number = 4) => `
-    MATCH (target) WHERE target.id IN $nodeIds AND target.projectId = $projectId
+    MATCH (target:GraphNode) WHERE target.id IN $nodeIds AND target.projectId = $projectId
     MATCH path = (dependent)-[*2..${maxDepth}]->(target)
     WHERE dependent.projectId = $projectId AND all(n IN nodes(path) WHERE n.projectId = $projectId AND n.coreType IS NOT NULL)
       AND NOT dependent.id IN $nodeIds
@@ -866,7 +855,7 @@ export const QUERIES = {
    * Get transitive dependents - nodes that depend on dependents (for deeper impact)
    */
   GET_TRANSITIVE_DEPENDENTS: (maxDepth: number = 4) => `
-    MATCH (target) WHERE target.id = $nodeId AND target.projectId = $projectId
+    MATCH (target:GraphNode {id: $nodeId, projectId: $projectId})
     MATCH path = (dependent)-[*2..${maxDepth}]->(target)
     WHERE dependent.projectId = $projectId AND all(n IN nodes(path) WHERE n.projectId = $projectId)
     WITH dependent,

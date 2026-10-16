@@ -19,7 +19,7 @@ const NOTE_SEVERITIES = ['info', 'warning', 'critical'] as const;
  * Cypher to create a SessionNote node, link it to code nodes via [:ABOUT],
  * and link it to the latest SessionBookmark for the session via [:HAS_NOTE]
  */
-const CREATE_SESSION_NOTE_QUERY = `
+export const CREATE_SESSION_NOTE_QUERY = `
   // Create the SessionNote node
   CREATE (n:SessionNote {
     id: $noteId,
@@ -34,17 +34,10 @@ const CREATE_SESSION_NOTE_QUERY = `
     expiresAt: $expiresAt
   })
 
-  // Link to referenced code nodes (filter out internal coordination nodes)
+  // Link to referenced code nodes (:GraphNode excludes coordination nodes)
   WITH n
   UNWIND CASE WHEN size($aboutNodeIds) = 0 THEN [null] ELSE $aboutNodeIds END AS aboutNodeId
-  OPTIONAL MATCH (target)
-  WHERE aboutNodeId IS NOT NULL
-    AND target.id = aboutNodeId
-    AND target.projectId = $projectId
-    AND NOT target:SessionNote
-    AND NOT target:SessionBookmark
-    AND NOT target:Pheromone
-    AND NOT target:SwarmTask
+  OPTIONAL MATCH (target:GraphNode {id: aboutNodeId, projectId: $projectId})
   WITH n, collect(target) AS targets
   FOREACH (t IN [x IN targets WHERE x IS NOT NULL] | MERGE (n)-[:ABOUT]->(t))
 

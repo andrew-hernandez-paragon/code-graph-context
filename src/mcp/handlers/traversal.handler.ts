@@ -47,7 +47,7 @@ interface TraversalData {
 }
 
 export class TraversalHandler {
-  private static readonly NODE_NOT_FOUND_QUERY = 'MATCH (n) WHERE n.id = $nodeId AND n.projectId = $projectId RETURN n';
+  private static readonly NODE_NOT_FOUND_QUERY = 'MATCH (n:GraphNode {id: $nodeId, projectId: $projectId}) RETURN n';
   private static readonly GET_NODE_BY_FILE_PATH_QUERY =
     'MATCH (sf:SourceFile {filePath: $filePath}) WHERE sf.projectId = $projectId RETURN sf.id AS nodeId LIMIT 1';
   // Relative paths match the entire suffix, never just their basename.
