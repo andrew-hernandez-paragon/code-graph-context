@@ -5,16 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.4.0] - Note Supersession and a Shared Embedding Server - 2026-10-16
+
+Lets a new note replace older ones in one call, stops every server start from rewriting all notes, and lets any process start the local embedding server and keep it alive while it uses it.
 
 ### Added
 
+- **`code-graph-context embeddings start`** makes sure a local embedding server is running and exits 0 once `/health` is ok, or 1 with the reason and the log path. It starts the server detached from the calling process, with output appended to `code-graph-context-embedding-sidecar.log` in the OS temp directory, and waits for a server that is still loading its model instead of starting a second one. Other tools, such as Runbench, call it before using the server over HTTP. (`src/cli/embeddings-start.ts`)
 - **`session_save` takes `supersedes: string[]`**, the ids of older notes the new note replaces. In the same transaction as the create, each listed note in the same project gets `supersededBy` set to the new note's id, so recall hides it and returns the new note. The response's `note.supersedes` lists the ids it `marked` and the ids it did not find (`notFound`), including ids from another project. Passing `supersedes` on a bookmark-only save is rejected. (`src/mcp/tools/session-save.tool.ts`)
+
+### Changed
+
+- **The embedding server owns its idle shutdown.** It stops itself when no `/embed` request has arrived for `EMBEDDING_IDLE_TIMEOUT_S` seconds (default 600; `0` disables), counting requests from every client. Previously the 10-minute timer lived in the MCP server that spawned it and counted only that server's own calls, so a client calling the server directly lost it mid-use. `EMBEDDING_IDLE_TIMEOUT_MS` is still read and converted. `EMBEDDING_WATCH_PARENT=0` stops the server from exiting when its stdin closes, which a detached server needs. (`sidecar/embedding_server.py`, `src/core/embeddings/embedding-sidecar.ts`)
+- **One launch path.** The MCP server and the CLI start the server through `launchEmbeddingServer` in `src/core/embeddings/embedding-server-launch.ts`, with the same Python resolution, model and arguments.
 
 ### Fixed
 
+- **A server that went away is started again.** When the server the MCP server started, or found already running, stops answering, the next embedding request starts it again and retries once; an HTTP error response is not retried. Before, every later request failed until the MCP server restarted.
+- **No second server while one is loading.** A start now tells "nothing listening" from "listening but loading" and waits for the loading server instead of spawning another on the same port.
 - **The supersession guidance hid the replacement note.** The `session_update` description and header told callers to save the replacement with `supersededBy: <oldId>`, but `supersededBy` on save marks the new note itself as superseded, so recall hid the replacement and kept returning the old note. The guidance now teaches `supersedes`, and the `supersededBy` parameter says what it does. Pairs saved the old way stay as they are; fix one with `session_update` by clearing `supersededBy` on the new note and setting it on the old one. (`src/mcp/constants.ts`, `src/mcp/tools/session-update.tool.ts`)
 - **The startup SessionNote migration no longer rewrites every note.** Its match included `n.supersededBy IS NULL`, which is true for every note without the property, so each start rewrote every current note and logged it as a migration. It now selects only notes missing `aboutNodeIds` or `lastValidated`, so a migrated graph logs nothing. (`src/mcp/service-init.ts`)
+
+### Upgrading
+
+`npm i -g` replaces the package directory, and with it `sidecar/.venv`. Run `code-graph-context init` after upgrading to rebuild it; with Neo4j already running, `init` leaves the container alone and only sets up the sidecar. The 5.3.0 note below says the sidecar rebuilds the venv on next use: it does not, and without the venv the server falls back to system Python and fails to load the model.
 
 ## [5.3.0] - Embedding Provenance, Evidence Preservation and Windows Support - 2026-09-08
 
