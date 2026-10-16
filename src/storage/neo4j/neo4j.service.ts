@@ -2,6 +2,8 @@ import neo4j, { Driver } from 'neo4j-driver';
 
 import { MAX_TRAVERSAL_DEPTH } from '../../constants.js';
 import { getTimeoutConfig } from '../../core/config/timeouts.js';
+
+import { getNeo4jConnection } from './neo4j-connection.js';
 export class Neo4jService {
   private driver: Driver;
 
@@ -10,9 +12,7 @@ export class Neo4jService {
   }
 
   private createDriver() {
-    const uri = process.env.NEO4J_URI ?? 'bolt://localhost:7687';
-    const user = process.env.NEO4J_USER ?? 'neo4j';
-    const password = process.env.NEO4J_PASSWORD ?? 'PASSWORD';
+    const { uri, user, password } = getNeo4jConnection();
     const timeoutConfig = getTimeoutConfig();
 
     return neo4j.driver(uri, neo4j.auth.basic(user, password), {

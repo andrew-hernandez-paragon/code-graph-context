@@ -6,6 +6,10 @@
 
 import { execSync } from 'child_process';
 
+import { getNeo4jConnection } from '../storage/neo4j/neo4j-connection.js';
+
+import { isApocAvailable, probeBolt, waitForBolt } from './neo4j-bolt.js';
+
 // Container configuration
 export const NEO4J_CONFIG = {
   containerName: 'code-graph-neo4j',
@@ -137,54 +141,15 @@ export const createContainer = (options: CreateContainerOptions = {}): boolean =
 };
 
 /**
- * Check if Neo4j is accepting connections
- */
-export const isNeo4jReady = (
-  containerName: string = NEO4J_CONFIG.containerName,
-  password: string = NEO4J_CONFIG.defaultPassword,
-): boolean => {
-  const result = exec(`docker exec ${containerName} cypher-shell -u neo4j -p ${password} "RETURN 1"`);
-  return result !== null;
-};
-
-/**
- * Check if APOC plugin is available
- */
-export const isApocAvailable = (
-  containerName = NEO4J_CONFIG.containerName,
-  password = NEO4J_CONFIG.defaultPassword,
-): boolean => {
-  const result = exec(
-    `docker exec ${containerName} cypher-shell -u neo4j -p ${password} "CALL apoc.help('apoc') YIELD name RETURN count(name)"`,
-  );
-  return result !== null && !result.includes('error');
-};
-
-/**
- * Wait for Neo4j to be ready
- */
-export const waitForNeo4j = async (
-  containerName: string = NEO4J_CONFIG.containerName,
-  password: string = NEO4J_CONFIG.defaultPassword,
-  timeoutMs: number = NEO4J_CONFIG.healthCheckTimeoutMs,
-): Promise<boolean> => {
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < timeoutMs) {
-    if (isNeo4jReady(containerName, password)) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, NEO4J_CONFIG.healthCheckIntervalMs));
-  }
-
-  return false;
-};
-
-/**
  * Ensure Neo4j is running - start if needed
  */
 export const ensureNeo4jRunning = async (options: CreateContainerOptions = {}): Promise<EnsureNeo4jResult> => {
   const containerName = options.containerName ?? NEO4J_CONFIG.containerName;
+  const connection = {
+    uri: `bolt://localhost:${options.boltPort ?? NEO4J_CONFIG.boltPort}`,
+    user: NEO4J_CONFIG.defaultUser,
+    password: options.password ?? NEO4J_CONFIG.defaultPassword,
+  };
   const status = getContainerStatus(containerName);
 
   if (status === 'running') {
@@ -202,7 +167,11 @@ export const ensureNeo4jRunning = async (options: CreateContainerOptions = {}): 
   // Start existing container
   if (status === 'stopped') {
     if (startContainer(containerName)) {
-      const ready = await waitForNeo4j(containerName, options.password);
+      const ready = await waitForBolt(
+        connection,
+        NEO4J_CONFIG.healthCheckTimeoutMs,
+        NEO4J_CONFIG.healthCheckIntervalMs,
+      );
       return ready
         ? { success: true, action: 'started' }
         : { success: false, action: 'failed', error: 'Container started but Neo4j not responding' };
@@ -212,7 +181,7 @@ export const ensureNeo4jRunning = async (options: CreateContainerOptions = {}): 
 
   // Create new container
   if (createContainer(options)) {
-    const ready = await waitForNeo4j(containerName, options.password);
+    const ready = await waitForBolt(connection, NEO4J_CONFIG.healthCheckTimeoutMs, NEO4J_CONFIG.healthCheckIntervalMs);
     return ready
       ? { success: true, action: 'created' }
       : { success: false, action: 'failed', error: 'Container created but Neo4j not responding' };
@@ -221,15 +190,43 @@ export const ensureNeo4jRunning = async (options: CreateContainerOptions = {}): 
   return { success: false, action: 'failed', error: 'Failed to create container' };
 };
 
+const CONTAINER_BOLT_PORT = 7687;
+const CONTAINER_HTTP_PORT = 7474;
+
+/**
+ * Parse `docker port` output such as "7687/tcp -> 0.0.0.0:7687" into the host ports
+ */
+export const parsePublishedPorts = (output: string): { boltPort: number; httpPort: number } | null => {
+  const hostPorts = new Map<number, number>();
+  for (const line of output.split('\n')) {
+    const match = /^(\d+)\/tcp -> \S+:(\d+)$/.exec(line.trim());
+    if (match) hostPorts.set(Number(match[1]), Number(match[2]));
+  }
+  const boltPort = hostPorts.get(CONTAINER_BOLT_PORT);
+  const httpPort = hostPorts.get(CONTAINER_HTTP_PORT);
+  return boltPort !== undefined && httpPort !== undefined ? { boltPort, httpPort } : null;
+};
+
+/**
+ * Host ports a container publishes for Bolt and HTTP, or null when it publishes neither
+ */
+export const getContainerPublishedPorts = (
+  containerName: string = NEO4J_CONFIG.containerName,
+): { boltPort: number; httpPort: number } | null => {
+  const result = exec(`docker port ${containerName}`);
+  return result === null ? null : parsePublishedPorts(result);
+};
+
 /**
  * Get full status for diagnostics
  */
-export const getFullStatus = (): FullStatus => {
+export const getFullStatus = async (): Promise<FullStatus> => {
   const dockerInstalled = isDockerInstalled();
   const dockerRunning = dockerInstalled && isDockerRunning();
   const containerStatus = dockerRunning ? getContainerStatus() : 'not-found';
-  const neo4jReady = containerStatus === 'running' && isNeo4jReady();
-  const apocAvailable = neo4jReady && isApocAvailable();
+  const connection = getNeo4jConnection();
+  const neo4jReady = containerStatus === 'running' && (await probeBolt(connection));
+  const apocAvailable = neo4jReady && (await isApocAvailable(connection));
 
   return {
     dockerInstalled,
