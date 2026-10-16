@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Native Neo4j provider for macOS with Homebrew.** `init` installs `neo4j` if missing, generates a config from the installed stock `neo4j.conf` plus a managed block (127.0.0.1 listeners, heap, page cache, small transaction logs, APOC unrestricted, `db.query.default_language=CYPHER_5`), copies the APOC core jar, sets the initial password, and runs Neo4j under the launchd agent `dev.code-graph-context.neo4j` with its own conf, plugins and data in `~/.local/share/code-graph-context/neo4j`. Homebrew upgrades replace only the binaries. `--native` and `--docker` force a provider; the default is native on macOS with Homebrew and Docker elsewhere. If the Docker container is running on the same ports, `init` leaves it alone. (`src/cli/neo4j-native.ts`)
+- **Provider record.** `init` writes `{ "neo4j": { "provider", "boltPort", "httpPort" } }` to `~/.config/code-graph-context/config.json` (directory overridable with `CGC_CONFIG_DIR`). (`src/cli/neo4j-provider-record.ts`)
+
+### Changed
+
+- **The MCP server probes Bolt before starting anything.** If `RETURN 1` answers at `NEO4J_URI`, no Docker call is made. Otherwise it starts the recorded provider and waits for Bolt; with no record it keeps the old Docker behavior, and without Docker it fails with "run code-graph-context init". (`src/mcp/neo4j-startup.ts`)
+- **A failed Neo4j start no longer skips the startup steps for good.** The server retries every 30 s, up to 20 times, then runs the schema, migration, backfill and index steps. Previously one failed start skipped them until the next server start. (`src/mcp/service-init.ts`)
+- **Readiness and APOC checks use Bolt for both providers** instead of `docker exec cypher-shell`. (`src/cli/neo4j-bolt.ts`)
+- **`status` and `stop` follow the recorded provider.** `status` shows the provider, service state, Bolt reachability, APOC and the Neo4j version.
+
 ## [5.4.1] - Smaller Transaction Logs - 2026-10-16
 
 ### Changed

@@ -94,7 +94,7 @@ Nodes have both `coreType` (AST) and `semanticType` (framework meaning), enablin
 
 - **Node.js** >= 18
 - **Python** >= 3.10 (for local embeddings)
-- **Docker** (for Neo4j)
+- **Homebrew** on macOS (Neo4j runs natively), or **Docker** on any platform
 
 > **No API keys required.** Local embeddings work out of the box using a Python sidecar.
 
@@ -106,7 +106,8 @@ code-graph-context init  # Sets up Neo4j + Python sidecar + downloads embedding 
 ```
 
 The `init` command handles everything:
-- Starts a Neo4j container via Docker
+- Sets up Neo4j: on macOS with Homebrew it installs `neo4j` if missing and runs it as a launchd agent (`dev.code-graph-context.neo4j`) with its own config, plugins and data under `~/.local/share/code-graph-context/neo4j`, so `brew upgrade` never touches them; elsewhere it starts a Docker container. Force a provider with `--native` or `--docker`.
+- Records the provider in `~/.config/code-graph-context/config.json`, so the MCP server knows what to start
 - Creates a Python virtual environment
 - Installs embedding dependencies (PyTorch, sentence-transformers)
 - Downloads the default BGE-base embedding model
@@ -602,8 +603,8 @@ claude mcp add --scope user code-graph-context \
 # Check the server is registered
 claude mcp list
 
-# Verify Neo4j is running
-docker ps | grep neo4j
+# Verify Neo4j is running (shows the provider, service state, Bolt and APOC)
+code-graph-context status
 
 # Test manually
 code-graph-context status
@@ -663,8 +664,8 @@ parse_typescript_project({
 
 ```bash
 code-graph-context init [options]   # Set up Neo4j + Python sidecar + embedding model
-code-graph-context status           # Check Docker/Neo4j/sidecar status
-code-graph-context stop             # Stop Neo4j container
+code-graph-context status           # Check provider, Neo4j and sidecar status
+code-graph-context stop             # Stop Neo4j (launchd service or container)
 ```
 
 **Init options:**
@@ -672,7 +673,11 @@ code-graph-context stop             # Stop Neo4j container
 - `--http-port <port>` - Browser port (default: 7474)
 - `--password <password>` - Neo4j password (default: PASSWORD)
 - `-m, --memory <size>` - Heap memory (default: 2G)
-- `-f, --force` - Recreate container
+- `--native` / `--docker` - Choose the provider (default: native on macOS with Homebrew, otherwise Docker)
+- `--pagecache <size>` - Page cache size (default: 1G)
+- `-f, --force` - Recreate the container, or regenerate native config and restart (data is kept)
+
+If a Docker graph named `code-graph-neo4j` is already running on the same ports, native `init` configures but does not start Neo4j; it points to `code-graph-context migrate-from-docker`. Do not also run `brew services start neo4j`: it starts a second Neo4j without this config.
 
 ---
 

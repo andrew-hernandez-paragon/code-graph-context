@@ -13,21 +13,25 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { Command } from 'commander';
 
 import { getLocalEmbeddingModel } from '../core/embeddings/embedding-config.js';
+import { Neo4jConnection, getNeo4jConnection } from '../storage/neo4j/neo4j-connection.js';
 
 import { runEmbeddingsStart } from './embeddings-start.js';
+import { isApocAvailable, probeBolt, queryBolt, waitForBolt } from './neo4j-bolt.js';
 import {
   NEO4J_CONFIG,
   createContainer,
+  getContainerPublishedPorts,
   getContainerStatus,
   getFullStatus,
-  isApocAvailable,
   isDockerInstalled,
   isDockerRunning,
   removeContainer,
   startContainer,
   stopContainer,
-  waitForNeo4j,
 } from './neo4j-docker.js';
+import { NativeNeo4jProvider, createNativeNeo4jProvider } from './neo4j-native.js';
+import { Neo4jProviderName, readProviderRecord, writeProviderRecord } from './neo4j-provider-record.js';
+import { selectNeo4jProvider } from './select-neo4j-provider.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -384,19 +388,168 @@ interface InitOptions {
   memory?: string;
   pagecache?: string;
   force?: boolean;
+  native?: boolean;
+  docker?: boolean;
 }
 
+interface ResolvedInitOptions {
+  boltPort: number;
+  httpPort: number;
+  password: string;
+  memory: string;
+  pagecache: string;
+  force: boolean;
+}
+
+const DEFAULT_QUERY_LANGUAGE = 'CYPHER_5';
+
+const initConnection = ({ boltPort, password }: ResolvedInitOptions): Neo4jConnection => ({
+  uri: `bolt://localhost:${boltPort}`,
+  user: NEO4J_CONFIG.defaultUser,
+  password,
+});
+
+const recordProvider = (provider: Neo4jProviderName, { boltPort, httpPort }: ResolvedInitOptions): void => {
+  writeProviderRecord({ provider, boltPort, httpPort });
+};
+
+const printNeo4jReady = ({ boltPort, httpPort, password }: ResolvedInitOptions): void => {
+  console.log(`
+${c.bold}Neo4j is ready${c.reset}
+
+  Browser:     ${c.cyan}http://localhost:${httpPort}${c.reset}
+  Bolt URI:    ${c.cyan}bolt://localhost:${boltPort}${c.reset}
+  Credentials: ${c.dim}neo4j / ${password}${c.reset}`);
+};
+
 /**
- * Init command - set up Neo4j
+ * Init command - set up Neo4j with the native or Docker provider
  */
 const runInit = async (options: InitOptions): Promise<void> => {
-  const boltPort = options.port ? parseInt(options.port, 10) : NEO4J_CONFIG.boltPort;
-  const httpPort = options.httpPort ? parseInt(options.httpPort, 10) : NEO4J_CONFIG.httpPort;
-  const password = options.password ?? NEO4J_CONFIG.defaultPassword;
-  const memory = options.memory ?? '2G';
-  const pagecache = options.pagecache ?? '1G';
+  const resolved: ResolvedInitOptions = {
+    boltPort: options.port ? parseInt(options.port, 10) : NEO4J_CONFIG.boltPort,
+    httpPort: options.httpPort ? parseInt(options.httpPort, 10) : NEO4J_CONFIG.httpPort,
+    password: options.password ?? NEO4J_CONFIG.defaultPassword,
+    memory: options.memory ?? '2G',
+    pagecache: options.pagecache ?? '1G',
+    force: options.force ?? false,
+  };
 
   header('Code Graph Context Setup');
+
+  const native = createNativeNeo4jProvider();
+  let provider: Neo4jProviderName;
+  try {
+    provider = selectNeo4jProvider({
+      native: options.native,
+      docker: options.docker,
+      platform: process.platform,
+      brewAvailable: process.platform === 'darwin' && (await native.isBrewAvailable()),
+    });
+  } catch (error) {
+    log(sym.err, error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  if (provider === 'native') {
+    await runNativeInit(native, resolved);
+  } else {
+    await runDockerInit(resolved);
+  }
+};
+
+const installNativeNeo4j = async (native: NativeNeo4jProvider): Promise<void> => {
+  if (await native.isInstalled()) return;
+
+  const s = spinner('Installing Neo4j with Homebrew (brew install neo4j)...');
+  const result = await native.install();
+  const installed = result.exitCode === 0 && (await native.isInstalled());
+  s.stop(installed, installed ? 'Neo4j installed with Homebrew' : 'brew install neo4j failed');
+  if (!installed) {
+    console.log(`\n  ${c.dim}${result.stderr.trim().split('\n').slice(-5).join('\n  ')}${c.reset}`);
+    console.log(`\n  Run it yourself, then rerun init: ${c.dim}brew install neo4j${c.reset}\n`);
+    process.exit(1);
+  }
+};
+
+const dockerNeo4jUsesPorts = (resolved: ResolvedInitOptions): boolean => {
+  if (getContainerStatus() !== 'running') return false;
+  const published = getContainerPublishedPorts();
+  return published !== null && (published.boltPort === resolved.boltPort || published.httpPort === resolved.httpPort);
+};
+
+const queryDefaultLanguage = async (connection: Neo4jConnection): Promise<unknown> => {
+  const rows = await queryBolt(
+    connection,
+    "SHOW SETTINGS YIELD name, value WHERE name = 'db.query.default_language' RETURN value",
+  );
+  return rows[0]?.value;
+};
+
+const runNativeInit = async (native: NativeNeo4jProvider, resolved: ResolvedInitOptions): Promise<void> => {
+  const connection = initConnection(resolved);
+
+  await installNativeNeo4j(native);
+  log(sym.ok, `Neo4j ${(await native.neo4jVersion()) ?? ''} installed (Homebrew)`);
+
+  if (resolved.force) {
+    const s = spinner('Stopping native Neo4j for reconfiguration...');
+    await native.stopService();
+    s.stop(true, 'Native Neo4j stopped');
+  }
+  if (resolved.force || !(await native.isConfigured())) {
+    await native.configure({
+      boltPort: resolved.boltPort,
+      httpPort: resolved.httpPort,
+      password: resolved.password,
+      heapMax: resolved.memory,
+      pagecache: resolved.pagecache,
+    });
+    log(sym.ok, `Config, APOC and launchd agent written under ${c.dim}${native.paths.home}${c.reset}`);
+  } else {
+    log(sym.ok, 'Native Neo4j already configured');
+  }
+
+  if (dockerNeo4jUsesPorts(resolved)) {
+    log(sym.warn, `The Docker graph (${NEO4J_CONFIG.containerName}) is still running on these ports`);
+    console.log(
+      `\n  Native Neo4j is configured but not started. ${c.dim}code-graph-context migrate-from-docker${c.reset} moves the Docker graph over.\n`,
+    );
+    return;
+  }
+
+  if (await native.isBrewServiceStarted()) {
+    log(sym.warn, `brew services runs its own Neo4j; stop it with ${c.dim}brew services stop neo4j${c.reset}`);
+  }
+
+  if (resolved.force || !(await probeBolt(connection))) {
+    await native.startService();
+  }
+  const healthSpinner = spinner('Waiting for Neo4j to be ready (this may take a minute)...');
+  const ready = await waitForBolt(connection);
+  healthSpinner.stop(ready, ready ? 'Neo4j is ready' : 'Neo4j failed to start');
+  if (!ready) {
+    console.log(`\n  Check logs: ${c.dim}${join(native.paths.logs, 'neo4j.log')}${c.reset}\n`);
+    process.exit(1);
+  }
+
+  const apocOk = await isApocAvailable(connection);
+  log(apocOk ? sym.ok : sym.warn, apocOk ? 'APOC plugin verified' : 'APOC plugin not detected');
+  const language = await queryDefaultLanguage(connection);
+  log(
+    language === DEFAULT_QUERY_LANGUAGE ? sym.ok : sym.warn,
+    `Default query language: ${String(language)} (expected ${DEFAULT_QUERY_LANGUAGE})`,
+  );
+
+  printNeo4jReady(resolved);
+  await setupSidecar();
+  recordProvider('native', resolved);
+  printConfigInstructions(resolved.password, resolved.boltPort);
+};
+
+const runDockerInit = async (resolved: ResolvedInitOptions): Promise<void> => {
+  const { boltPort, httpPort, password, memory, pagecache, force } = resolved;
+  const connection = initConnection(resolved);
 
   // Check Docker
   if (!isDockerInstalled()) {
@@ -416,10 +569,10 @@ const runInit = async (options: InitOptions): Promise<void> => {
   // Handle existing container
   const status = getContainerStatus();
 
-  if (status === 'running' && !options.force) {
+  if (status === 'running' && !force) {
     log(sym.ok, 'Neo4j container already running');
 
-    const apocOk = isApocAvailable(NEO4J_CONFIG.containerName, password);
+    const apocOk = await isApocAvailable(connection);
     log(apocOk ? sym.ok : sym.warn, apocOk ? 'APOC plugin available' : 'APOC plugin not detected');
 
     console.log(`\n  ${c.dim}Use --force to recreate the container${c.reset}`);
@@ -427,18 +580,19 @@ const runInit = async (options: InitOptions): Promise<void> => {
     // Still set up sidecar even if Neo4j is already running
     await setupSidecar();
 
+    recordProvider('docker', resolved);
     printConfigInstructions(password, boltPort);
     return;
   }
 
-  if (status !== 'not-found' && options.force) {
+  if (status !== 'not-found' && force) {
     const s = spinner('Removing existing container...');
     stopContainer();
     removeContainer();
     s.stop(true, 'Removed existing container');
   }
 
-  if (status === 'stopped' && !options.force) {
+  if (status === 'stopped' && !force) {
     const s = spinner('Starting existing container...');
     const started = startContainer();
     if (!started) {
@@ -447,7 +601,7 @@ const runInit = async (options: InitOptions): Promise<void> => {
       process.exit(1);
     }
     s.stop(true, 'Container started');
-  } else if (status === 'not-found' || options.force) {
+  } else if (status === 'not-found' || force) {
     const s = spinner('Creating Neo4j container...');
     const created = createContainer({ httpPort, boltPort, password, memory, pagecache });
     if (!created) {
@@ -464,7 +618,7 @@ const runInit = async (options: InitOptions): Promise<void> => {
 
   // Wait for Neo4j
   const healthSpinner = spinner('Waiting for Neo4j to be ready (this may take a minute)...');
-  const ready = await waitForNeo4j(NEO4J_CONFIG.containerName, password);
+  const ready = await waitForBolt(connection, NEO4J_CONFIG.healthCheckTimeoutMs, NEO4J_CONFIG.healthCheckIntervalMs);
   healthSpinner.stop(ready, ready ? 'Neo4j is ready' : 'Neo4j failed to start');
 
   if (!ready) {
@@ -473,30 +627,73 @@ const runInit = async (options: InitOptions): Promise<void> => {
   }
 
   // Check APOC
-  const apocOk = isApocAvailable(NEO4J_CONFIG.containerName, password);
+  const apocOk = await isApocAvailable(connection);
   log(apocOk ? sym.ok : sym.warn, apocOk ? 'APOC plugin verified' : 'APOC still loading (should be ready shortly)');
 
-  // Print connection info
-  console.log(`
-${c.bold}Neo4j is ready${c.reset}
-
-  Browser:     ${c.cyan}http://localhost:${httpPort}${c.reset}
-  Bolt URI:    ${c.cyan}bolt://localhost:${boltPort}${c.reset}
-  Credentials: ${c.dim}neo4j / ${password}${c.reset}`);
+  printNeo4jReady(resolved);
 
   // Set up Python embedding sidecar
   await setupSidecar();
 
+  recordProvider('docker', resolved);
   printConfigInstructions(password, boltPort);
 };
 
-/**
- * Status command
- */
-const runStatus = (): void => {
-  header('Code Graph Context Status');
+const printSidecarStatus = (): void => {
+  console.log('');
+  const pythonVersion = getPythonVersion();
+  log(pythonVersion ? sym.ok : sym.warn, `Python: ${pythonVersion ?? 'not found'}`);
 
-  const status = getFullStatus();
+  if (pythonVersion) {
+    const sidecarDir = getSidecarDir();
+    const venvExists = existsSync(join(sidecarDir, '.venv'));
+    log(venvExists ? sym.ok : sym.warn, `Sidecar venv: ${venvExists ? 'exists' : 'not created'}`);
+
+    if (venvExists) {
+      const python = getSidecarPython(sidecarDir);
+      const hasDeps =
+        checkPipPackage('sentence_transformers', python) &&
+        checkPipPackage('fastapi', python) &&
+        checkPipPackage('torch', python);
+      log(hasDeps ? sym.ok : sym.warn, `Sidecar deps: ${hasDeps ? 'installed' : 'not installed'}`);
+    }
+  }
+
+  console.log('');
+};
+
+const printNativeStatus = async (native: NativeNeo4jProvider): Promise<void> => {
+  const connection = getNeo4jConnection();
+  log(sym.ok, 'Provider: native (Homebrew)');
+
+  const installed = await native.isInstalled();
+  log(
+    installed ? sym.ok : sym.err,
+    `Neo4j installed: ${installed ? `yes (${(await native.neo4jVersion()) ?? 'unknown version'})` : 'no'}`,
+  );
+  if (!installed) {
+    console.log(`\n  Install: ${c.dim}brew install neo4j${c.reset}, then ${c.dim}code-graph-context init${c.reset}\n`);
+    return;
+  }
+
+  const loaded = await native.isServiceLoaded();
+  log(loaded ? sym.ok : sym.warn, `Service: ${loaded ? 'loaded' : 'not loaded'}`);
+  const ready = await probeBolt(connection);
+  log(ready ? sym.ok : sym.warn, `Bolt reachable at ${connection.uri}: ${ready ? 'yes' : 'no'}`);
+  if (ready) {
+    const apocOk = await isApocAvailable(connection);
+    log(apocOk ? sym.ok : sym.warn, `APOC plugin: ${apocOk ? 'available' : 'not available'}`);
+  }
+
+  printSidecarStatus();
+  if (!ready) {
+    console.log(`  Run ${c.dim}code-graph-context init${c.reset} to start Neo4j\n`);
+  }
+};
+
+const printDockerStatus = async (): Promise<void> => {
+  log(sym.ok, 'Provider: docker');
+  const status = await getFullStatus();
 
   log(status.dockerInstalled ? sym.ok : sym.err, `Docker installed: ${status.dockerInstalled ? 'yes' : 'no'}`);
 
@@ -524,27 +721,7 @@ const runStatus = (): void => {
     );
   }
 
-  // Sidecar status
-  console.log('');
-  const pythonVersion = getPythonVersion();
-  log(pythonVersion ? sym.ok : sym.warn, `Python: ${pythonVersion ?? 'not found'}`);
-
-  if (pythonVersion) {
-    const sidecarDir = getSidecarDir();
-    const venvExists = existsSync(join(sidecarDir, '.venv'));
-    log(venvExists ? sym.ok : sym.warn, `Sidecar venv: ${venvExists ? 'exists' : 'not created'}`);
-
-    if (venvExists) {
-      const python = getSidecarPython(sidecarDir);
-      const hasDeps =
-        checkPipPackage('sentence_transformers', python) &&
-        checkPipPackage('fastapi', python) &&
-        checkPipPackage('torch', python);
-      log(hasDeps ? sym.ok : sym.warn, `Sidecar deps: ${hasDeps ? 'installed' : 'not installed'}`);
-    }
-  }
-
-  console.log('');
+  printSidecarStatus();
 
   if (status.containerStatus !== 'running') {
     console.log(`  Run ${c.dim}code-graph-context init${c.reset} to start Neo4j\n`);
@@ -554,9 +731,38 @@ const runStatus = (): void => {
 };
 
 /**
+ * Status command
+ */
+const runStatus = async (): Promise<void> => {
+  header('Code Graph Context Status');
+
+  if (readProviderRecord()?.provider === 'native') {
+    await printNativeStatus(createNativeNeo4jProvider());
+  } else {
+    await printDockerStatus();
+  }
+};
+
+/**
  * Stop command
  */
-const runStop = (): void => {
+const runStop = async (): Promise<void> => {
+  if (readProviderRecord()?.provider === 'native') {
+    const native = createNativeNeo4jProvider();
+    if (!(await native.isServiceLoaded())) {
+      log(sym.info, 'Native Neo4j already stopped');
+      return;
+    }
+    const s = spinner('Stopping Neo4j...');
+    try {
+      await native.stopService();
+      s.stop(true, 'Neo4j stopped');
+    } catch (error) {
+      s.stop(false, error instanceof Error ? error.message : 'Failed to stop Neo4j');
+    }
+    return;
+  }
+
   const status = getContainerStatus();
 
   if (status === 'not-found') {
@@ -608,18 +814,20 @@ program.name('code-graph-context').description('MCP server for code graph analys
 
 program
   .command('init')
-  .description('Set up Neo4j container and show configuration steps')
+  .description('Set up Neo4j (native on macOS with Homebrew, otherwise Docker) and show configuration steps')
   .option('-p, --port <port>', 'Neo4j Bolt port', '7687')
   .option('--http-port <port>', 'Neo4j Browser port', '7474')
   .option('--password <password>', 'Neo4j password', 'PASSWORD')
   .option('-m, --memory <size>', 'Max heap memory (e.g., 2G, 4G)', '2G')
   .option('--pagecache <size>', 'Page cache size (e.g., 1G, 2G)', '1G')
-  .option('-f, --force', 'Recreate container even if exists')
+  .option('-f, --force', 'Recreate the container, or regenerate native config and restart (data is kept)')
+  .option('--native', 'Run Neo4j from Homebrew under launchd (default on macOS with Homebrew)')
+  .option('--docker', 'Run Neo4j in a Docker container')
   .action(runInit);
 
-program.command('status').description('Check Neo4j and Docker status').action(runStatus);
+program.command('status').description('Check Neo4j and sidecar status').action(runStatus);
 
-program.command('stop').description('Stop the Neo4j container').action(runStop);
+program.command('stop').description('Stop Neo4j').action(runStop);
 
 const embeddings = program.command('embeddings').description('Manage the local embedding server');
 
