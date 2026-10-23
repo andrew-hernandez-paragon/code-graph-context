@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`search_codebase` returns every match's scores as JSON.** The response gains `matches`: each hit in rank order, rank 1 being the node the traversal starts from, with `id`, `name`, `filePath`, `fusedScore`, `vectorScore` (Neo4j's `(1 + cosine) / 2`), `vectorCosine`, `lexicalScore` and `channels`. Before, the best match's score reached only the traversal's title, which the JSON drops, and the other matches came as prose appended after the JSON, so a caller had to parse text and could never score the best match. That prose section is gone. A start node with no connections now answers `{ "message": ..., "matches": [...] }` instead of a bare sentence. (`src/mcp/handlers/search-matches.ts`, `src/mcp/tools/search-codebase.tool.ts`)
+
 ## [5.5.1] - Indexed Node Lookups - 2026-10-16
 
 Code node lookups by id and file path stopped scanning the whole database.

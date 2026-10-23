@@ -73,7 +73,7 @@ export const TOOL_METADATA = {
     title: 'Search Codebase',
     description: `Primary tool for finding code. Use this first for any code exploration query. Combines semantic vector search with dependency graph traversal from the best match.
 
-Returns normalized JSON with nodes map and relationship chains. If output too large: reduce maxDepth, set includeCode=false, or reduce snippetLength.`,
+Returns normalized JSON with nodes map and relationship chains, plus \`matches\`: every hit in rank order (rank 1 is the traversal's start node) with its id, name, filePath and scores (\`fusedScore\`, \`vectorScore\` as Neo4j reports it, \`vectorCosine\`, \`lexicalScore\`). Pass another match's id to traverse_from_node to explore it. If output too large: reduce maxDepth, set includeCode=false, or reduce snippetLength.`,
   },
   [TOOL_NAMES.naturalLanguageToCypher]: {
     title: 'Natural Language to Cypher',

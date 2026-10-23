@@ -11,6 +11,7 @@ import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, DEFAULTS } from '../constants.js';
 import { searchCodeHybrid, type FusedSearchRow } from '../handlers/query-signals.handler.js';
+import { searchMatchesOf, withSearchMatches } from '../handlers/search-matches.js';
 import { TraversalHandler } from '../handlers/traversal.handler.js';
 import {
   createEmptyResponse,
@@ -120,24 +121,11 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           );
         }
 
-        // Best match — traverse from this node
+        const matches = searchMatchesOf(qualifiedResults);
+        // The traversal starts from the best match; the others are listed for traverse_from_node.
         const bestMatch = qualifiedResults[0];
-        const nodeId = bestMatch.node.properties.id as string;
+        const nodeId = matches[0].id;
         const bestScore = formatFusedScore(bestMatch);
-
-        // Build alternative matches summary for the response
-        const alternatives = qualifiedResults.slice(1);
-        const altLines = alternatives.map((r) => {
-          const props = r.node.properties as { id?: string; name?: string; filePath?: string };
-          const name = props.name ?? props.id ?? r.node.id;
-          const file = props.filePath ? ` (${props.filePath})` : '';
-          return `  - ${name}${file} [${formatFusedScore(r)}, id: ${props.id ?? r.node.id}]`;
-        });
-
-        const altSection =
-          altLines.length > 0
-            ? `\n\nAlternative matches (use traverse_from_node to explore):\n${altLines.join('\n')}`
-            : '';
 
         const traversalResult = await traversalHandler.traverseFromNode(nodeId, embedding, {
           projectId: resolvedProjectId,
@@ -152,9 +140,9 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           useWeightedTraversal,
         });
 
-        // Append alternatives to the traversal response
-        if (altSection && traversalResult.content?.[0]?.type === 'text') {
-          traversalResult.content[0].text += altSection;
+        const first = traversalResult.content?.[0];
+        if (first?.type === 'text') {
+          first.text = withSearchMatches(first.text, matches);
         }
 
         return traversalResult;
