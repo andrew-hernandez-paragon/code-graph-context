@@ -118,7 +118,6 @@ const recall = async (args: Record<string, unknown>) =>
     includeCode: true,
     snippetLength: 500,
     limit: 5,
-    minSimilarity: 0.3,
     includeSuperseded: false,
     ...args,
   });
@@ -213,6 +212,42 @@ describe('session_save anchors', () => {
 });
 
 describe('session_recall', () => {
+  beforeEach(() => {
+    vi.stubEnv('OPENAI_EMBEDDINGS_ENABLED', 'false');
+    vi.stubEnv('EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('searches notes at the calibrated floor and bookmarks at the uncalibrated one when minSimilarity is absent', async () => {
+    await recall({ projectId: 'proj_code', query: 'retry cap' });
+
+    expect(callsTo('VECTOR INDEX session_notes_idx')[0][1].minSimilarity).toBe(0.8);
+    expect(callsTo('VECTOR INDEX session_bookmarks_idx')[0][1].minSimilarity).toBe(0.3);
+  });
+
+  it('searches at the long-standing default under a model with no calibration', async () => {
+    vi.stubEnv('EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2');
+
+    await recall({ projectId: 'proj_code', query: 'retry cap' });
+
+    expect(callsTo('VECTOR INDEX session_notes_idx')[0][1].minSimilarity).toBe(0.3);
+  });
+
+  it('searches at the caller minSimilarity when one is given', async () => {
+    await recall({ projectId: 'proj_code', query: 'retry cap', minSimilarity: 0.55 });
+
+    expect(callsTo('VECTOR INDEX session_notes_idx')[0][1].minSimilarity).toBe(0.55);
+  });
+
+  it('says no note was close enough and how to see weaker matches when a query finds nothing', async () => {
+    const message = resultText(await recall({ projectId: 'proj_code', query: 'retry cap' }));
+
+    expect(message).toContain('No note was close enough to the query');
+    expect(message).toContain('lower minSimilarity to show weaker matches');
+  });
+
   it('searches the union of projectId and projectIds once per project and names each project in the result', async () => {
     await saveNote();
 

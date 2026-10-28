@@ -78,5 +78,6 @@ describe.skipIf(process.env.CGC_NEO4J_TESTS !== '1')('project-filtered vector se
       expect(String(row.nodeId1).startsWith(`${sample.projectId}:`)).toBe(true);
       expect(String(row.nodeId2).startsWith(`${sample.projectId}:`)).toBe(true);
     }
-  });
+    // One vector search per node of the project, against a live store whose caches may be cold.
+  }, 60_000);
 });

@@ -6,6 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { getNoteRecallFloor, UNCALIBRATED_RECALL_FLOOR } from '../../core/embeddings/embedding-config.js';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import {
   changedPathsOf,
@@ -258,8 +259,9 @@ export const createSessionRecallTool = (server: McpServer): void => {
           .min(0)
           .max(1)
           .optional()
-          .default(0.3)
-          .describe('Minimum similarity for semantic search'),
+          .describe(
+            'Minimum similarity for semantic search, on the (1 + cosine) / 2 scale. Default is calibrated per embedding model: 0.80 for BAAI/bge-base-en-v1.5 (cosine 0.60), 0.30 for other models. Lower it to see weaker matches.',
+          ),
         includeSuperseded: z
           .boolean()
           .optional()
@@ -280,10 +282,13 @@ export const createSessionRecallTool = (server: McpServer): void => {
       includeCode,
       snippetLength,
       limit,
-      minSimilarity,
+      minSimilarity: requestedMinSimilarity,
       includeSuperseded,
     }) => {
       const neo4jService = new Neo4jService();
+      const minSimilarity = requestedMinSimilarity ?? getNoteRecallFloor();
+      // Bookmark matching was not calibrated, so it keeps the long-standing floor.
+      const bookmarkMinSimilarity = requestedMinSimilarity ?? UNCALIBRATED_RECALL_FLOOR;
 
       try {
         const projectInputs = [...new Set([...(projectId ? [projectId] : []), ...(projectIds ?? [])])];
@@ -326,7 +331,7 @@ export const createSessionRecallTool = (server: McpServer): void => {
             {
               projectIds: resolvedProjectIds,
               queryEmbedding,
-              minSimilarity,
+              minSimilarity: bookmarkMinSimilarity,
               agentId: agentId ?? null,
             },
           );
@@ -470,8 +475,12 @@ export const createSessionRecallTool = (server: McpServer): void => {
           return createEmptyResponse(
             sessionId
               ? `No bookmark or notes found for session "${sessionId}" in ${projectLabel}`
-              : `No notes found in ${projectLabel}`,
-            query ? 'Try a different query, or lower minSimilarity.' : 'Save notes or bookmarks with session_save.',
+              : query
+                ? `No note was close enough to the query in ${projectLabel}`
+                : `No notes found in ${projectLabel}`,
+            query
+              ? 'Try a different query, or lower minSimilarity to show weaker matches.'
+              : 'Save notes or bookmarks with session_save.',
           );
         }
 

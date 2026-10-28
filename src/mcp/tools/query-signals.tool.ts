@@ -38,6 +38,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { getNoteRecallFloor } from '../../core/embeddings/embedding-config.js';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { embeddingWarnings, ProjectService, type Project } from '../../core/projects/index.js';
 import { toNumberOrNull } from '../../core/utils/shared-utils.js';
@@ -171,6 +172,8 @@ export const SENSE_PHEROMONES_FOR_SIGNALS = `
   ORDER BY currentIntensity DESC, p.timestamp DESC
   LIMIT toInteger($limit)
 `;
+
+const DEFAULT_CODE_MIN_SIMILARITY = 0.5;
 
 const SOURCES = ['code', 'notes', 'pheromones'] as const;
 type Source = (typeof SOURCES)[number];
@@ -414,10 +417,15 @@ export const runQuerySignals = async (
     sources = ['code', 'notes', 'pheromones'],
     limitPerSource = 5,
     since,
-    minSimilarity = 0.5,
+    minSimilarity,
     minIntensity = 0.3,
     groupBy = 'source',
   } = input;
+
+  // A caller value applies to both sources. Without one, notes use the calibrated floor; code keeps 0.5
+  // because code search fuses keyword and vector channels and the calibration measured notes only.
+  const codeMinSimilarity = minSimilarity ?? DEFAULT_CODE_MIN_SIMILARITY;
+  const noteMinSimilarity = minSimilarity ?? getNoteRecallFloor();
 
   const queryId = generateQueryId();
   const sinceMs = parseSinceMs(since);
@@ -454,7 +462,7 @@ export const runQuerySignals = async (
       projectIds,
       embedding,
       limit: limitPerSource,
-      minSimilarity,
+      minSimilarity: codeMinSimilarity,
     });
     latencies.code = Date.now() - tStart;
     const results = rows.map((r) => projectCodeResult(r));
@@ -481,7 +489,7 @@ export const runQuerySignals = async (
             candidates: NOTE_CANDIDATES_PER_PROJECT,
             sinceMs,
             queryEmbedding: embedding,
-            minSimilarity,
+            minSimilarity: noteMinSimilarity,
           })
         : await neo4jService.run(RECENT_NOTES_FOR_SIGNALS, { projectIds, limit, sinceMs });
     latencies.notes = Date.now() - tStart;
@@ -614,8 +622,9 @@ export const createQuerySignalsTool = (server: McpServer): void => {
           .min(0)
           .max(1)
           .optional()
-          .default(0.5)
-          .describe('Minimum cosine similarity for vector sources (code, notes)'),
+          .describe(
+            'Minimum similarity for vector sources (code, notes), on the (1 + cosine) / 2 scale. When set, applies to both. When omitted, notes use the floor calibrated for the embedding model (0.80 for BAAI/bge-base-en-v1.5) and code uses 0.5.',
+          ),
         minIntensity: z
           .number()
           .min(0)

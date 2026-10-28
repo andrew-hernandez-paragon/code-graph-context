@@ -18,27 +18,32 @@ describe.skipIf(process.env.CGC_NEO4J_TESTS !== '1')('Embedding stamp backfill s
     await db?.close();
   });
 
-  // proj_d7b9bff20766 is cursordiff-orchestrator, whose code holds 1024-dimension CodeSage vectors.
-  it('reads the vector size of a project embedded with another model, and the comparison flags it', async () => {
+  it('reads each codebase vector size, matches its stamp, and flags only a model other than the configured one', async () => {
     const rows = await db.runReadOnly(
-      `MATCH (p:Project {projectId: $projectId}) ${SAMPLE_EMBEDDED_NODE_CYPHER} RETURN p.name AS name, dimensions, model`,
-      { projectId: 'proj_d7b9bff20766' },
+      `MATCH (p:Project) WHERE p.kind = 'codebase' ${SAMPLE_EMBEDDED_NODE_CYPHER}
+       RETURN p.projectId AS projectId, p.name AS name, p.embeddingDimensions AS stamped, dimensions, model`,
     );
-
-    expect(rows).toHaveLength(1);
-    const dimensions = Number(rows[0].dimensions);
-    expect(dimensions).toBe(1024);
-    expect(
-      describeEmbeddingMismatch(
+    expect(rows.length).toBeGreaterThan(0);
+    const configured = { model: getEmbeddingModel(), dimensions: getEmbeddingDimensions() };
+    for (const row of rows) {
+      const dimensions = Number(row.dimensions);
+      expect(dimensions).toBeGreaterThan(0);
+      if (row.stamped != null) expect(Number(row.stamped)).toBe(dimensions);
+      const warning = describeEmbeddingMismatch(
         {
-          projectId: 'proj_d7b9bff20766',
-          name: rows[0].name,
-          embeddingModel: rows[0].model ?? null,
+          projectId: row.projectId,
+          name: row.name,
+          embeddingModel: row.model ?? null,
           embeddingDimensions: dimensions,
         },
-        { model: getEmbeddingModel(), dimensions: getEmbeddingDimensions() },
-      ),
-    ).toContain('1024 dimensions');
+        configured,
+      );
+      if (dimensions === configured.dimensions && (row.model == null || row.model === configured.model)) {
+        expect(warning).toBeNull();
+      } else {
+        expect(warning).toContain(`${dimensions} dimensions`);
+      }
+    }
   });
 
   it('selects only codebases without a stamp, each with a positive vector size', async () => {

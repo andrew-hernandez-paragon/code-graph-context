@@ -257,7 +257,7 @@ Anchor a note to what it is about with aboutNodeIds (ids from search_codebase) o
   },
   [TOOL_NAMES.sessionRecall]: {
     title: 'Session Recall',
-    description: `Recalls saved notes and bookmarks (memory) from one or more projects. Pass query to search notes by meaning; pass sessionId to restore that session's latest bookmark and its notes. Call it before working in an area. projectIds recalls across several projects in one call, such as a repository and a collection.
+    description: `Recalls saved notes and bookmarks (memory) from one or more projects. Pass query to search notes by meaning; pass sessionId to restore that session's latest bookmark and its notes. Call it before working in an area. projectIds recalls across several projects in one call, such as a repository and a collection. A query can return fewer notes than limit, or none, when nothing is close enough; an empty result means no relevant note, not a broken tool.
 
 Each note reports staleAboutNodeIds, missingAboutPaths and changedAboutPaths when its anchors no longer match the code. Check the code, then fix the note with session_update or replace it with session_save and supersedes. Superseded notes are hidden unless includeSuperseded=true.`,
     annotations: READS,

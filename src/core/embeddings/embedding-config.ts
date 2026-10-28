@@ -13,6 +13,13 @@ export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   'nomic-ai/nomic-embed-text-v1.5': 768,
 };
 
+export const UNCALIBRATED_RECALL_FLOOR = 0.3;
+
+// Note-recall floors on the tool similarity scale, (1 + cosine) / 2. Calibration: docs/code-graph-context/research/recall-relevance-calibration.md
+export const NOTE_RECALL_FLOORS: Record<string, number> = {
+  'BAAI/bge-base-en-v1.5': 0.8,
+};
+
 export const isOpenAIAvailable = (): boolean => Boolean(process.env.OPENAI_API_KEY?.trim());
 
 export const isOpenAIRequested = (): boolean => {
@@ -33,3 +40,5 @@ export const getEmbeddingModel = (): string =>
 
 export const getEmbeddingDimensions = (): number =>
   EMBEDDING_DIMENSIONS[getEmbeddingModel()] ?? (isOpenAIEnabled() ? 3072 : 1536);
+
+export const getNoteRecallFloor = (): number => NOTE_RECALL_FLOORS[getEmbeddingModel()] ?? UNCALIBRATED_RECALL_FLOOR;

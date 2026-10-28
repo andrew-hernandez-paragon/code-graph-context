@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../handlers/query-signals.handler.js', () => ({
   probeEmbeddingsHealth: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock('../../../core/embeddings/embeddings.service.js', () => ({
   },
 }));
 
-import { probeEmbeddingsHealth } from '../../handlers/query-signals.handler.js';
+import { probeEmbeddingsHealth, searchCodeRaw } from '../../handlers/query-signals.handler.js';
 import { runQuerySignals } from '../query-signals.tool.js';
 
 const noteRow = (id: string, projectId: string, relevance: number | null) => ({
@@ -34,7 +34,14 @@ describe('query_signals notes source', () => {
 
   beforeEach(() => {
     run.mockReset();
+    vi.mocked(searchCodeRaw).mockClear();
+    vi.stubEnv('OPENAI_EMBEDDINGS_ENABLED', 'false');
+    vi.stubEnv('EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5');
     vi.mocked(probeEmbeddingsHealth).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('searches the notes index inside each project with the filters kept', async () => {
@@ -58,7 +65,7 @@ describe('query_signals notes source', () => {
       limit: 3,
       candidates: 300,
       queryEmbedding: [0.1, 0.2],
-      minSimilarity: 0.5,
+      minSimilarity: 0.8,
     });
   });
 
@@ -88,5 +95,34 @@ describe('query_signals notes source', () => {
     expect(query).not.toContain('SEARCH');
     expect(params).not.toHaveProperty('queryEmbedding');
     expect(response).toMatchObject({ sources: { notes: { skipped: 'semantic-ranking-unavailable' } } });
+  });
+
+  describe('minSimilarity', () => {
+    it('uses the calibrated floor for notes and 0.5 for code when the caller passes none', async () => {
+      run.mockResolvedValue([]);
+
+      await runQuerySignals(db, { projectIds: ['p1'], query: 'q', sources: ['code', 'notes'] });
+
+      expect(run.mock.calls[0][1]).toMatchObject({ minSimilarity: 0.8 });
+      expect(vi.mocked(searchCodeRaw).mock.calls[0][1]).toMatchObject({ minSimilarity: 0.5 });
+    });
+
+    it('uses the long-standing recall default for notes under a model with no calibration', async () => {
+      vi.stubEnv('EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2');
+      run.mockResolvedValue([]);
+
+      await runQuerySignals(db, { projectIds: ['p1'], query: 'q', sources: ['notes'] });
+
+      expect(run.mock.calls[0][1]).toMatchObject({ minSimilarity: 0.3 });
+    });
+
+    it('applies the caller value to both code and notes', async () => {
+      run.mockResolvedValue([]);
+
+      await runQuerySignals(db, { projectIds: ['p1'], query: 'q', sources: ['code', 'notes'], minSimilarity: 0.65 });
+
+      expect(run.mock.calls[0][1]).toMatchObject({ minSimilarity: 0.65 });
+      expect(vi.mocked(searchCodeRaw).mock.calls[0][1]).toMatchObject({ minSimilarity: 0.65 });
+    });
   });
 });
