@@ -6,16 +6,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { createCheckParseStatusTool } from './check-parse-status.tool.js';
-import { createIngestCursordiffSessionTool } from './ingest-cursordiff-session.tool.js';
-import { createListIngestCursordiffWatchersTool } from './list-ingest-cursordiff-watchers.tool.js';
-import { createStopIngestCursordiffSessionTool } from './stop-ingest-cursordiff-session.tool.js';
-import { createIngestDeliberateSessionTool } from './ingest-deliberate-session.tool.js';
-import { createStopIngestDeliberateSessionTool } from './stop-ingest-deliberate-session.tool.js';
-import { createListIngestDeliberateWatchersTool } from './list-ingest-deliberate-watchers.tool.js';
+import { createCreateProjectTool } from './create-project.tool.js';
 import { createDetectDeadCodeTool } from './detect-dead-code.tool.js';
 import { createDetectDuplicateCodeTool } from './detect-duplicate-code.tool.js';
 import { createHelloTool } from './hello.tool.js';
 import { createImpactAnalysisTool } from './impact-analysis.tool.js';
+import { createIngestCursordiffSessionTool } from './ingest-cursordiff-session.tool.js';
+import { createIngestDeliberateSessionTool } from './ingest-deliberate-session.tool.js';
+import { createListIngestCursordiffWatchersTool } from './list-ingest-cursordiff-watchers.tool.js';
+import { createListIngestDeliberateWatchersTool } from './list-ingest-deliberate-watchers.tool.js';
 import { createListProjectsTool } from './list-projects.tool.js';
 import { createListWatchersTool } from './list-watchers.tool.js';
 import { createNaturalLanguageToCypherTool } from './natural-language-to-cypher.tool.js';
@@ -28,6 +27,8 @@ import { createSessionRecallTool } from './session-recall.tool.js';
 import { createSessionSaveTool } from './session-save.tool.js';
 import { createSessionUpdateTool } from './session-update.tool.js';
 import { createStartWatchProjectTool } from './start-watch-project.tool.js';
+import { createStopIngestCursordiffSessionTool } from './stop-ingest-cursordiff-session.tool.js';
+import { createStopIngestDeliberateSessionTool } from './stop-ingest-deliberate-session.tool.js';
 import { createStopWatchProjectTool } from './stop-watch-project.tool.js';
 import { createSwarmAdvanceTaskTool } from './swarm-advance-task.tool.js';
 import { createSwarmClaimTaskTool } from './swarm-claim-task.tool.js';
@@ -89,6 +90,7 @@ export const registerAllTools = (server: McpServer): void => {
 
   // Register project management tools
   createListProjectsTool(server);
+  createCreateProjectTool(server);
 
   // Register file watch tools
   createStartWatchProjectTool(server);

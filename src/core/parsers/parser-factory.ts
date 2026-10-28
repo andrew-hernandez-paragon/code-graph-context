@@ -24,7 +24,7 @@ export interface ParserFactoryOptions {
   customFrameworkSchemas?: FrameworkSchema[];
   excludePatterns?: string[];
   excludedNodeTypes?: CoreNodeType[];
-  projectId?: string; // Optional - derived from workspacePath if not provided
+  projectId: string; // The id ProjectService chose for this workspace; parsers never derive one
   lazyLoad?: boolean; // Set to true for large projects to avoid OOM
 }
 
@@ -147,8 +147,8 @@ export class ParserFactory {
    */
   static async createParserWithAutoDetection(
     workspacePath: string,
-    tsConfigPath?: string,
-    projectId?: string,
+    tsConfigPath: string | undefined,
+    projectId: string,
     lazyLoad: boolean = false,
   ): Promise<TypeScriptParser> {
     const projectType = await this.detectProjectType(workspacePath);

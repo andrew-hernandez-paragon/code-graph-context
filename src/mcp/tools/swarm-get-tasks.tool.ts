@@ -7,8 +7,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { createErrorResponse, createSuccessResponse, findProjectOrError, debugLog } from '../utils.js';
 
 import { TASK_STATUSES, TASK_TYPES, TASK_PRIORITIES, TaskPriority } from './swarm-constants.js';
 
@@ -171,8 +171,9 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmGetTasks].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmGetTasks].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmGetTasks].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         swarmId: z.string().optional().describe('Filter by swarm ID'),
         taskId: z.string().optional().describe('Get a specific task by ID (returns full details)'),
         statuses: z.array(z.enum(TASK_STATUSES)).optional().describe('Filter by task statuses'),
@@ -212,12 +213,12 @@ export const createSwarmGetTasksTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
 
       // Resolve project ID
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         // If taskId is provided, get single task with full details

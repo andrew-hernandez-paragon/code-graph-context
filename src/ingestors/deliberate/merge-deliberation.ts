@@ -1,4 +1,5 @@
 import { CypherEmit } from '../cursordiff/merge-toolcall.js';
+
 import { DeliberationRow } from './read-jsonl.js';
 
 export const mergeDeliberation = (row: DeliberationRow): CypherEmit => ({
@@ -30,7 +31,7 @@ export const mergeDeliberation = (row: DeliberationRow): CypherEmit => ({
 /**
  * Emit a SCOPED_TO edge from a Deliberation to a Project node.
  * Uses MATCH on Project so the edge is silently a no-op when the project node
- * does not exist yet (ensureProjectNode handles creation separately).
+ * is not registered; create_project registers it.
  */
 export const mergeScopedTo = (deliberationId: string, projectId: string): CypherEmit => ({
   query: `

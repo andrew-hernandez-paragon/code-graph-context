@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { QUERIES } from '../../../storage/neo4j/neo4j.service.js';
 import { createImpactAnalysisTool } from '../impact-analysis.tool.js';
 
@@ -12,7 +13,7 @@ vi.mock('../../../storage/neo4j/neo4j.service.js', async (importOriginal) => ({
 }));
 vi.mock('../../utils.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils.js')>()),
-  resolveProjectIdOrError: vi.fn(async (projectId: string) => ({ success: true, projectId })),
+  findCodebaseOrError: vi.fn(async (projectId: string) => ({ success: true, project: { projectId } })),
   debugLog: vi.fn(),
 }));
 

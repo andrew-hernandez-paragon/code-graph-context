@@ -6,10 +6,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { createErrorResponse, createSuccessResponse, findOrRegisterProjectOrError, debugLog } from '../utils.js';
 
 import { TASK_PRIORITIES, TASK_TYPES, TaskPriority, generateTaskId } from './swarm-constants.js';
 
@@ -111,8 +110,9 @@ export const createSwarmPostTaskTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmPostTask].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmPostTask].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmPostTask].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         swarmId: z.string().describe('Swarm ID for grouping related tasks'),
         title: z.string().min(1).max(200).describe('Short title for the task'),
         description: z.string().describe('Detailed description of what needs to be done'),
@@ -149,16 +149,12 @@ export const createSwarmPostTaskTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
 
       // Resolve project ID
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findOrRegisterProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
-
-      await ensureProjectNode(neo4jService, resolvedProjectId, {
-        synthetic: isSyntheticProjectId(resolvedProjectId),
-      });
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         const taskId = generateTaskId();

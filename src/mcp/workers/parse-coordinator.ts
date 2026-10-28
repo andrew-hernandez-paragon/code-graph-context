@@ -22,9 +22,9 @@ import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { ParserFactory, ProjectType } from '../../core/parsers/parser-factory.js';
 import { StreamingParser } from '../../core/parsers/typescript-parser.js';
 import { WorkspaceParser } from '../../core/parsers/workspace-parser.js';
+import { getProjectName, ProjectService } from '../../core/projects/index.js';
 import { debugLog } from '../../core/utils/file-utils.js';
 import { ProgressCallback } from '../../core/utils/progress-reporter.js';
-import { getProjectName, UPSERT_PROJECT_QUERY, UPDATE_PROJECT_STATUS_QUERY } from '../../core/utils/project-id.js';
 import { WorkspaceDetector } from '../../core/workspace/index.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { PARSING, CONFIG_FILE_PATTERNS } from '../constants.js';
@@ -152,7 +152,8 @@ const runParser = async (): Promise<void> => {
     await neo4jService.run(QUERIES.CLEAR_PROJECT, { projectId: resolvedProjectId });
 
     const projectName = await getProjectName(config.projectPath);
-    await neo4jService.run(UPSERT_PROJECT_QUERY, {
+    const projectService = new ProjectService(neo4jService);
+    await projectService.upsertCodebase({
       projectId: resolvedProjectId,
       name: projectName,
       path: config.projectPath,
@@ -221,7 +222,7 @@ const runParser = async (): Promise<void> => {
     const edgeRecovery = await recoverSessionEdges(neo4jService, resolvedProjectId);
     await debugLog('Session edge recovery (worker)', edgeRecovery);
 
-    await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
+    await projectService.updateParseStatus({
       projectId: resolvedProjectId,
       status: 'complete',
       nodeCount: totalNodesImported,
@@ -245,7 +246,7 @@ const runParser = async (): Promise<void> => {
   } catch (error: any) {
     try {
       const serviceForUpdate = neo4jService ?? new Neo4jService();
-      await serviceForUpdate.run(UPDATE_PROJECT_STATUS_QUERY, {
+      await new ProjectService(serviceForUpdate).updateParseStatus({
         projectId: resolvedProjectId,
         status: 'failed',
         nodeCount: 0,

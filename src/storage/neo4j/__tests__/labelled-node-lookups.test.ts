@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { SENSE_PHEROMONES_FOR_SIGNALS } from '../../../mcp/tools/query-signals.tool.js';
-import { CREATE_BOOKMARK_QUERY as BOOKMARK_TOOL_CREATE_BOOKMARK_QUERY } from '../../../mcp/tools/session-bookmark.tool.js';
-import { CREATE_SESSION_NOTE_QUERY as NOTE_TOOL_CREATE_NOTE_QUERY } from '../../../mcp/tools/session-note.tool.js';
 import {
   CREATE_BOOKMARK_QUERY as SAVE_CREATE_BOOKMARK_QUERY,
   CREATE_SESSION_NOTE_QUERY as SAVE_CREATE_NOTE_QUERY,
@@ -65,20 +63,18 @@ const labelledLookups: Array<[string, string, string]> = [
   [
     'session_update RECREATE_NOTE_ABOUT_EDGES_QUERY',
     RECREATE_NOTE_ABOUT_EDGES_QUERY,
-    'MATCH (target:GraphNode {id: aboutId, projectId: $projectId})',
+    'MATCH (target:GraphNode {id: ref.id, projectId: ref.projectId})',
   ],
   [
     'session_save CREATE_SESSION_NOTE_QUERY',
     SAVE_CREATE_NOTE_QUERY,
-    'OPTIONAL MATCH (target:GraphNode {id: aboutNodeId, projectId: $projectId})',
+    'OPTIONAL MATCH (target:GraphNode {id: ref.id, projectId: ref.projectId})',
   ],
   [
-    'session_note CREATE_SESSION_NOTE_QUERY',
-    NOTE_TOOL_CREATE_NOTE_QUERY,
-    'OPTIONAL MATCH (target:GraphNode {id: aboutNodeId, projectId: $projectId})',
+    'session_save CREATE_BOOKMARK_QUERY',
+    SAVE_CREATE_BOOKMARK_QUERY,
+    'OPTIONAL MATCH (target:GraphNode {id: ref.id, projectId: ref.projectId})',
   ],
-  ['session_save CREATE_BOOKMARK_QUERY', SAVE_CREATE_BOOKMARK_QUERY, 'OPTIONAL MATCH (target:GraphNode)'],
-  ['session_bookmark CREATE_BOOKMARK_QUERY', BOOKMARK_TOOL_CREATE_BOOKMARK_QUERY, 'OPTIONAL MATCH (target:GraphNode)'],
   [
     'swarm_pheromone CREATE_PHEROMONE_QUERY',
     CREATE_PHEROMONE_QUERY,

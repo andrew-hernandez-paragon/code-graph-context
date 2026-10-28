@@ -16,9 +16,11 @@ import {
   type SemanticDuplicateResult,
 } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { runProjectFilteredSearch, UnfilteredVectorIndexError } from '../../storage/neo4j/project-vector-search.js';
+import { VECTOR_INDEXES } from '../../storage/neo4j/vector-indexes.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
 import {
-  autoResolveProjectId,
+  resolveSoleCodebaseOrError,
   createEmptyResponse,
   createErrorResponse,
   createSuccessResponse,
@@ -153,11 +155,9 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].title,
       description: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.detectDuplicateCode].annotations,
       inputSchema: {
-        projectId: z
-          .string()
-          .optional()
-          .describe('Project ID, name, or path (auto-resolves if only one project exists)'),
+        projectId: z.string().optional().describe(PROJECT_ID_DESCRIPTION.codebaseIfOnlyOne),
         type: z
           .enum(['structural', 'semantic', 'all'])
           .optional()
@@ -207,9 +207,9 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID
-        const projectResult = await autoResolveProjectId(projectId, neo4jService);
+        const projectResult = await resolveSoleCodebaseOrError(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
-        const resolvedProjectId = projectResult.projectId;
+        const resolvedProjectId = projectResult.project.projectId;
 
         const coreTypes = getScopeFilter(scope as Scope);
         const duplicateGroups: DuplicateGroup[] = [];
@@ -294,14 +294,20 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
           let semanticResult: SemanticDuplicateResult[] = [];
 
           try {
-            semanticResult = (await neo4jService.run(QUERIES.FIND_SEMANTIC_DUPLICATES, {
-              projectId: resolvedProjectId,
-              coreTypes,
-              minSimilarity,
-              vectorNeighbors,
-              limit: Math.floor(maxResults * 2), // Get extra for filtering (ensure integer)
-            })) as SemanticDuplicateResult[];
+            semanticResult = (await runProjectFilteredSearch(
+              neo4jService,
+              VECTOR_INDEXES.embeddedNodes,
+              QUERIES.FIND_SEMANTIC_DUPLICATES,
+              {
+                projectId: resolvedProjectId,
+                coreTypes,
+                minSimilarity,
+                vectorNeighbors,
+                limit: Math.floor(maxResults * 2), // Get extra for filtering (ensure integer)
+              },
+            )) as SemanticDuplicateResult[];
           } catch (error) {
+            if (error instanceof UnfilteredVectorIndexError) throw error;
             const errorMessage = error instanceof Error ? error.message : String(error);
             // Check for vector index errors
             if (

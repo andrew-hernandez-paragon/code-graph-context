@@ -56,6 +56,7 @@ export const createCheckParseStatusTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.checkParseStatus].title,
       description: TOOL_METADATA[TOOL_NAMES.checkParseStatus].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.checkParseStatus].annotations,
       inputSchema: {
         jobId: z.string().describe('Job ID returned from async parse_typescript_project'),
       },

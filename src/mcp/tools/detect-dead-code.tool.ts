@@ -18,8 +18,8 @@ import {
   type FrameworkEntryPointResult,
 } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { autoResolveProjectId, createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { resolveSoleCodebaseOrError, createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
 // Result type for semantic types query
 interface SemanticTypeResult {
@@ -150,11 +150,9 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.detectDeadCode].title,
       description: TOOL_METADATA[TOOL_NAMES.detectDeadCode].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.detectDeadCode].annotations,
       inputSchema: {
-        projectId: z
-          .string()
-          .optional()
-          .describe('Project ID, name, or path (auto-resolves if only one project exists)'),
+        projectId: z.string().optional().describe(PROJECT_ID_DESCRIPTION.codebaseIfOnlyOne),
         excludePatterns: z.array(z.string()).optional().describe('Additional file patterns to exclude as entry points'),
         excludeSemanticTypes: z.array(z.string()).optional().describe('Additional semantic types to exclude'),
         includeEntryPoints: z
@@ -199,9 +197,9 @@ export const createDetectDeadCodeTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID
-        const projectResult = await autoResolveProjectId(projectId, neo4jService);
+        const projectResult = await resolveSoleCodebaseOrError(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
-        const resolvedProjectId = projectResult.projectId;
+        const resolvedProjectId = projectResult.project.projectId;
 
         // Query project's actual semantic types (data-driven, per-project detection)
         const semanticTypesResult = (await neo4jService.run(QUERIES.GET_PROJECT_SEMANTIC_TYPES, {

@@ -11,10 +11,7 @@ import { deliberateWatchManager } from '../services/deliberate-watch-manager.js'
 import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
 const inputSchema = z.object({
-  watchId: z
-    .string()
-    .optional()
-    .describe('Watch ID returned by ingest_deliberate_session (mode: watch)'),
+  watchId: z.string().optional().describe('Watch ID returned by ingest_deliberate_session (mode: watch)'),
   dataDir: z.string().optional().describe('Data directory of the watcher to stop (alternative to watchId)'),
 });
 
@@ -24,6 +21,7 @@ export const createStopIngestDeliberateSessionTool = (server: McpServer): void =
     {
       title: TOOL_METADATA[TOOL_NAMES.stopIngestDeliberateSession].title,
       description: TOOL_METADATA[TOOL_NAMES.stopIngestDeliberateSession].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.stopIngestDeliberateSession].annotations,
       inputSchema: inputSchema.shape,
     },
     async (args: z.infer<typeof inputSchema>) => {
@@ -32,9 +30,7 @@ export const createStopIngestDeliberateSessionTool = (server: McpServer): void =
 
         if (!watchId && !dataDir) {
           return createErrorResponse(
-            new Error(
-              'Provide either watchId or dataDir. Use list_ingest_deliberate_watchers to see active watchers.',
-            ),
+            new Error('Provide either watchId or dataDir. Use list_ingest_deliberate_watchers to see active watchers.'),
           );
         }
 

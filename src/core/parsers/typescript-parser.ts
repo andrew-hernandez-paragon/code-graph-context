@@ -40,7 +40,6 @@ import {
   toParsedEdge,
   generateDeterministicId,
 } from '../utils/graph-factory.js';
-import { resolveProjectId } from '../utils/project-id.js';
 
 /**
  * Context for CALLS edge resolution.
@@ -185,14 +184,14 @@ export class TypeScriptParser {
     coreSchema: CoreTypeScriptSchema = CORE_TYPESCRIPT_SCHEMA,
     frameworkSchemas: FrameworkSchema[] = [NESTJS_FRAMEWORK_SCHEMA],
     parseConfig: ParseOptions = DEFAULT_PARSE_OPTIONS,
-    projectId?: string, // Optional - derived from workspacePath if not provided
+    projectId: string,
     lazyLoad: boolean = false, // Set to true for large projects to avoid OOM
   ) {
     this.workspacePath = workspacePath;
     this.coreSchema = coreSchema;
     this.frameworkSchemas = frameworkSchemas;
     this.parseConfig = parseConfig;
-    this.projectId = resolveProjectId(workspacePath, projectId);
+    this.projectId = projectId;
     this.lazyLoad = lazyLoad;
 
     debugLog('Parser initialized', { projectId: this.projectId, lazyLoad });

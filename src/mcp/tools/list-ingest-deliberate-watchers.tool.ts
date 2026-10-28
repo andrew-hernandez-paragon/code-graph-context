@@ -15,6 +15,7 @@ export const createListIngestDeliberateWatchersTool = (server: McpServer): void 
     {
       title: TOOL_METADATA[TOOL_NAMES.listIngestDeliberateWatchers].title,
       description: TOOL_METADATA[TOOL_NAMES.listIngestDeliberateWatchers].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.listIngestDeliberateWatchers].annotations,
       inputSchema: {},
     },
     async () => {
@@ -38,6 +39,7 @@ export const createListIngestDeliberateWatchersTool = (server: McpServer): void 
             lastActivityAt: w.lastActivityAt,
             lastErrorAt: w.lastErrorAt,
             lastError: w.lastError,
+            unknownProjectIds: w.unknownProjectIds,
           })),
         };
 

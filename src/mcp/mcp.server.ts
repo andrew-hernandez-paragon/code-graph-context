@@ -18,16 +18,16 @@ const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..', '..');
 dotenv.config({ path: join(rootDir, '.env'), quiet: true });
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+// eslint-disable-next-line import/order
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { stopEmbeddingSidecar } from '../core/embeddings/embedding-sidecar.js';
 
-import { MCP_SERVER_CONFIG, MESSAGES } from './constants.js';
+import { MESSAGES, TOOL_NAMES } from './constants.js';
+import { createMcpServer } from './create-server.js';
 import { performIncrementalParse } from './handlers/incremental-parse.handler.js';
 import { initializeServices } from './service-init.js';
 import { watchManager } from './services/watch-manager.js';
-import { registerAllTools } from './tools/index.js';
 import { debugLog } from './utils.js';
 
 // Track server state for debugging
@@ -61,15 +61,8 @@ const startServer = async (): Promise<void> => {
   console.error(JSON.stringify({ level: 'info', message: MESSAGES.server.starting }));
   await debugLog('Server starting', { pid: process.pid, startTime: serverStartTime.toISOString() });
 
-  // Create MCP server instance
-  const server = new McpServer({
-    name: MCP_SERVER_CONFIG.name,
-    version: MCP_SERVER_CONFIG.version,
-  });
-
-  // Register all tools
-  registerAllTools(server);
-  await debugLog('Tools registered', { toolCount: 15 });
+  const server = createMcpServer();
+  await debugLog('Tools registered', { toolCount: Object.keys(TOOL_NAMES).length });
 
   // Configure watch manager with incremental parse handler and MCP server
   watchManager.setIncrementalParseHandler(performIncrementalParse);

@@ -10,10 +10,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { createErrorResponse, createSuccessResponse, findOrRegisterProjectOrError, debugLog } from '../utils.js';
 
 import { MESSAGE_CATEGORY_KEYS, MESSAGE_DEFAULT_TTL_MS, generateMessageId } from './swarm-constants.js';
 
@@ -173,8 +172,9 @@ export const createSwarmMessageTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmMessage].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmMessage].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmMessage].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         swarmId: z.string().describe('Swarm ID for scoping messages'),
         agentId: z.string().describe('Your unique agent identifier'),
         action: z
@@ -225,16 +225,12 @@ export const createSwarmMessageTool = (server: McpServer): void => {
     }) => {
       const neo4jService = new Neo4jService();
 
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findOrRegisterProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
-
-      await ensureProjectNode(neo4jService, resolvedProjectId, {
-        synthetic: isSyntheticProjectId(resolvedProjectId),
-      });
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         // Optional cleanup of expired messages

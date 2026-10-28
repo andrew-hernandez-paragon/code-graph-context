@@ -16,6 +16,7 @@ export const createHelloTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.hello].title,
       description: TOOL_METADATA[TOOL_NAMES.hello].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.hello].annotations,
       inputSchema: {},
     },
     async () => {

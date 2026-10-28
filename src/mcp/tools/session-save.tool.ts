@@ -1,22 +1,22 @@
 /**
  * Session Save Tool
- * Unified tool that merges save_session_bookmark and save_session_note into one call.
- * Auto-detects bookmark vs note based on input fields provided.
+ * Saves a bookmark or a note in one call; the input fields decide which.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { EmbeddingsService, getEmbeddingDimensions } from '../../core/embeddings/embeddings.service.js';
-import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
-import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
+import { InvalidProjectInputError, ProjectService } from '../../core/projects/index.js';
+import { NOTE_CATEGORIES, NOTE_SEVERITIES } from '../../core/session/note-vocabulary.js';
+import { SessionEmbeddingService } from '../../core/session/session-embedding.service.js';
+import { toNumber } from '../../core/utils/shared-utils.js';
+import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { SessionAnchorService } from '../handlers/session-anchor.service.js';
 import { saveSessionNoteChunks } from '../handlers/session-note-chunks.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
-
-// ---------------------------------------------------------------------------
-// Cypher queries (copied from their respective source tools)
-// ---------------------------------------------------------------------------
+import { parseSaveRequest } from '../handlers/session-save-request.js';
+import { createErrorResponse, createSuccessResponse, findOrRegisterProjectOrError, debugLog } from '../utils.js';
 
 export const CREATE_BOOKMARK_QUERY = `
   CREATE (b:SessionBookmark {
@@ -26,6 +26,7 @@ export const CREATE_BOOKMARK_QUERY = `
     agentId: $agentId,
     summary: $summary,
     workingSetNodeIds: $workingSetNodeIds,
+    workingSetPaths: $workingSetPaths,
     taskContext: $taskContext,
     findings: $findings,
     nextSteps: $nextSteps,
@@ -34,21 +35,24 @@ export const CREATE_BOOKMARK_QUERY = `
     updatedAt: timestamp()
   })
 
-  // Link to referenced code nodes (:GraphNode excludes coordination nodes)
+  // Link to referenced code nodes in any codebase (:GraphNode excludes coordination nodes)
   WITH b
-  OPTIONAL MATCH (target:GraphNode)
-  WHERE target.id IN $workingSetNodeIds
-    AND target.projectId = $projectId
-  WITH b, collect(DISTINCT target) AS targets
-  FOREACH (t IN targets | MERGE (b)-[:REFERENCES]->(t))
+  UNWIND CASE WHEN size($nodeRefs) = 0 THEN [null] ELSE $nodeRefs END AS ref
+  OPTIONAL MATCH (target:GraphNode {id: ref.id, projectId: ref.projectId})
+  WITH b, collect(target) AS nodeTargets
+
+  // Link to the SourceFile of each working set path inside a codebase
+  UNWIND CASE WHEN size($sourceFileRefs) = 0 THEN [null] ELSE $sourceFileRefs END AS fileRef
+  OPTIONAL MATCH (file:SourceFile {projectId: fileRef.projectId, filePath: fileRef.filePath})
+  WITH b, nodeTargets, collect(file) AS fileTargets
+  FOREACH (t IN [x IN nodeTargets + fileTargets WHERE x IS NOT NULL] | MERGE (b)-[:REFERENCES]->(t))
 
   RETURN b.id AS id,
          b.sessionId AS sessionId,
          b.agentId AS agentId,
          b.summary AS summary,
          b.taskContext AS taskContext,
-         b.createdAt AS createdAt,
-         size(targets) AS linkedNodes
+         b.createdAt AS createdAt
 `;
 
 export const CREATE_SESSION_NOTE_QUERY = `
@@ -63,18 +67,25 @@ export const CREATE_SESSION_NOTE_QUERY = `
     category: $category,
     severity: $severity,
     aboutNodeIds: $aboutNodeIds,
+    aboutPaths: $aboutPaths,
+    aboutPathHashes: $aboutPathHashes,
     lastValidated: timestamp(),
     supersededBy: $supersededBy,
     createdAt: timestamp(),
     expiresAt: $expiresAt
   })
 
-  // Link to referenced code nodes (:GraphNode excludes coordination nodes)
+  // Link to referenced code nodes in any codebase (:GraphNode excludes coordination nodes)
   WITH n
-  UNWIND CASE WHEN size($aboutNodeIds) = 0 THEN [null] ELSE $aboutNodeIds END AS aboutNodeId
-  OPTIONAL MATCH (target:GraphNode {id: aboutNodeId, projectId: $projectId})
-  WITH n, collect(target) AS targets
-  FOREACH (t IN [x IN targets WHERE x IS NOT NULL] | MERGE (n)-[:ABOUT]->(t))
+  UNWIND CASE WHEN size($nodeRefs) = 0 THEN [null] ELSE $nodeRefs END AS ref
+  OPTIONAL MATCH (target:GraphNode {id: ref.id, projectId: ref.projectId})
+  WITH n, collect(target) AS nodeTargets
+
+  // Link to the SourceFile of each anchor path inside a codebase
+  UNWIND CASE WHEN size($sourceFileRefs) = 0 THEN [null] ELSE $sourceFileRefs END AS fileRef
+  OPTIONAL MATCH (file:SourceFile {projectId: fileRef.projectId, filePath: fileRef.filePath})
+  WITH n, nodeTargets, collect(file) AS fileTargets
+  FOREACH (t IN [x IN nodeTargets + fileTargets WHERE x IS NOT NULL] | MERGE (n)-[:ABOUT]->(t))
 
   // Link to the latest SessionBookmark for this session (if one exists)
   WITH n
@@ -97,27 +108,10 @@ export const CREATE_SESSION_NOTE_QUERY = `
   RETURN n.id AS noteId, markedIds, notFoundIds
 `;
 
-const SET_NOTE_EMBEDDING_QUERY = `
-  MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
-  SET n.embedding = $embedding,
-      n.embeddingProvider = $embeddingProvider,
-      n.embeddingModel = $embeddingModel,
-      n.embeddingDimensions = size($embedding)
-  RETURN n.id AS noteId
-`;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const generateBookmarkId = (): string =>
   `bookmark_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 
 const generateNoteId = (): string => `note_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
-
-// ---------------------------------------------------------------------------
-// Tool registration
-// ---------------------------------------------------------------------------
 
 export const createSessionSaveTool = (server: McpServer): void => {
   server.registerTool(
@@ -125,10 +119,13 @@ export const createSessionSaveTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.sessionSave].title,
       description: TOOL_METADATA[TOOL_NAMES.sessionSave].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.sessionSave].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
-        sessionId: z.string().describe('Session/conversation identifier'),
-        agentId: z.string().describe('Your agent identifier'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
+        sessionId: z
+          .string()
+          .describe('Your session or conversation id. session_recall with it restores your latest bookmark and notes.'),
+        agentId: z.string().describe('Your agent id, stored on the note or bookmark'),
         type: z
           .enum(['bookmark', 'note', 'auto'])
           .optional()
@@ -136,19 +133,34 @@ export const createSessionSaveTool = (server: McpServer): void => {
           .describe('Force bookmark or note, or auto-detect from input'),
         // Bookmark fields
         summary: z.string().min(10).optional().describe('Current work state summary'),
-        workingSetNodeIds: z.array(z.string()).optional().describe('Code node IDs you are focused on'),
+        workingSetNodeIds: z
+          .array(z.string())
+          .optional()
+          .describe('Code node ids you are focused on, from search_codebase results. They may belong to any codebase.'),
+        workingSetPaths: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Files or folders you are focused on. Absolute, ~/ or relative to the project directory (relative paths need a codebase or directory project). A bookmark needs workingSetNodeIds or workingSetPaths.',
+          ),
         taskContext: z.string().optional().describe('High-level task being worked on'),
         findings: z.string().optional().describe('Key discoveries or decisions'),
         nextSteps: z.string().optional().describe('What to do next when resuming'),
         // Note fields
         topic: z.string().min(3).max(100).optional().describe('Short topic label'),
         content: z.string().min(10).optional().describe('Full observation text'),
-        category: z
-          .enum(['architectural', 'bug', 'insight', 'decision', 'risk', 'todo'])
+        category: z.enum(NOTE_CATEGORIES).optional().describe('Note category'),
+        severity: z.enum(NOTE_SEVERITIES).optional().default('info').describe('Note severity'),
+        aboutNodeIds: z
+          .array(z.string())
           .optional()
-          .describe('Note category'),
-        severity: z.enum(['info', 'warning', 'critical']).optional().default('info').describe('Note severity'),
-        aboutNodeIds: z.array(z.string()).optional().describe('Code node IDs this note is about'),
+          .describe('Code node ids this note is about, from search_codebase results. They may belong to any codebase.'),
+        aboutPaths: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Files or folders this note is about. Absolute, ~/ or relative to the project directory. Recall reports a path that is gone or whose file changed since the save.',
+          ),
         supersededBy: z
           .string()
           .nullable()
@@ -166,183 +178,113 @@ export const createSessionSaveTool = (server: McpServer): void => {
         metadata: z
           .string()
           .optional()
-          .describe('Additional structured data as JSON string (bookmark only — silently ignored on note saves)'),
+          .describe('Additional structured data as JSON string (bookmark only, silently ignored on note saves)'),
       },
     },
-    async ({
-      projectId,
-      sessionId,
-      agentId,
-      type = 'auto',
-      summary,
-      workingSetNodeIds,
-      taskContext,
-      findings = '',
-      nextSteps = '',
-      topic,
-      content,
-      category,
-      severity = 'info',
-      aboutNodeIds = [],
-      supersededBy = null,
-      supersedes = [],
-      expiresInHours,
-      metadata,
-    }) => {
+    async ({ projectId, sessionId, agentId, ...args }) => {
       const neo4jService = new Neo4jService();
-
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
-      if (!projectResult.success) {
-        await neo4jService.close();
-        return projectResult.error;
-      }
-      const resolvedProjectId = projectResult.projectId;
-
-      await ensureProjectNode(neo4jService, resolvedProjectId, {
-        synthetic: isSyntheticProjectId(resolvedProjectId),
-      });
-
-      // Determine effective operation mode
-      const hasBookmarkFields = workingSetNodeIds != null && workingSetNodeIds.length > 0;
-      const hasNoteFields = topic != null && content != null;
-
-      let effectiveType: 'bookmark' | 'note' | 'both';
-      if (type === 'bookmark') {
-        effectiveType = 'bookmark';
-      } else if (type === 'note') {
-        effectiveType = 'note';
-      } else {
-        // auto-detect
-        if (hasBookmarkFields && hasNoteFields) {
-          effectiveType = 'both';
-        } else if (hasBookmarkFields) {
-          effectiveType = 'bookmark';
-        } else if (hasNoteFields) {
-          effectiveType = 'note';
-        } else {
-          await neo4jService.close();
-          return createErrorResponse(
-            'Cannot auto-detect type: provide workingSetNodeIds for a bookmark, topic+content for a note, or both.',
-          );
-        }
-      }
-
       try {
-        // Validate required fields per operation
-        if ((effectiveType === 'bookmark' || effectiveType === 'both') && !summary) {
-          return createErrorResponse('summary is required when saving a bookmark.');
-        }
-        if ((effectiveType === 'bookmark' || effectiveType === 'both') && !taskContext) {
-          return createErrorResponse('taskContext is required when saving a bookmark.');
-        }
-        if (
-          (effectiveType === 'bookmark' || effectiveType === 'both') &&
-          (!workingSetNodeIds || workingSetNodeIds.length === 0)
-        ) {
-          return createErrorResponse('workingSetNodeIds is required when saving a bookmark.');
-        }
-        if ((effectiveType === 'note' || effectiveType === 'both') && !topic) {
-          return createErrorResponse('topic is required when saving a note.');
-        }
-        if ((effectiveType === 'note' || effectiveType === 'both') && !content) {
-          return createErrorResponse('content is required when saving a note.');
-        }
-        if ((effectiveType === 'note' || effectiveType === 'both') && !category) {
-          return createErrorResponse('category is required when saving a note.');
-        }
-        if (effectiveType === 'bookmark' && supersedes.length > 0) {
-          return createErrorResponse('supersedes applies only when saving a note.');
-        }
+        const projectResult = await findOrRegisterProjectOrError(projectId, neo4jService);
+        if (!projectResult.success) return projectResult.error;
+        const project = projectResult.project;
 
-        const result: Record<string, unknown> = { success: true, projectId: resolvedProjectId, sessionId, agentId };
+        const parsed = parseSaveRequest(args);
+        if (!parsed.success) return createErrorResponse(parsed.error);
+        const { request } = parsed;
+        const bookmarkInput = request.kind === 'note' ? null : request.bookmark;
+        const noteInput = request.kind === 'bookmark' ? null : request.note;
 
-        // ── Create bookmark ──────────────────────────────────────────────────
-        if (effectiveType === 'bookmark' || effectiveType === 'both') {
+        // Resolve both anchor sets before the first write, so an invalid path leaves nothing half saved.
+        const anchorService = new SessionAnchorService(new ProjectService(neo4jService), neo4jService);
+        const workingSet = bookmarkInput
+          ? await anchorService.resolveAnchors(project, {
+              nodeIds: bookmarkInput.workingSetNodeIds,
+              paths: bookmarkInput.workingSetPaths,
+            })
+          : null;
+        const anchors = noteInput
+          ? await anchorService.resolveAnchors(project, {
+              nodeIds: noteInput.aboutNodeIds,
+              paths: noteInput.aboutPaths,
+            })
+          : null;
+
+        const embeddingService = new SessionEmbeddingService(neo4jService, new EmbeddingsService());
+        const result: Record<string, unknown> = { success: true, projectId: project.projectId, sessionId, agentId };
+
+        if (bookmarkInput && workingSet) {
           const bookmarkId = generateBookmarkId();
-          const metadataJson = metadata ?? null;
-
           const bookmarkRows = await neo4jService.run(CREATE_BOOKMARK_QUERY, {
             bookmarkId,
-            projectId: resolvedProjectId,
+            projectId: project.projectId,
             sessionId,
             agentId,
-            summary: summary!,
-            workingSetNodeIds: workingSetNodeIds!,
-            taskContext: taskContext!,
-            findings,
-            nextSteps,
-            metadata: metadataJson,
+            summary: bookmarkInput.summary,
+            workingSetNodeIds: workingSet.nodeIds,
+            workingSetPaths: workingSet.paths,
+            nodeRefs: workingSet.nodeRefs,
+            sourceFileRefs: workingSet.sourceFileRefs,
+            taskContext: bookmarkInput.taskContext,
+            findings: bookmarkInput.findings,
+            nextSteps: bookmarkInput.nextSteps,
+            metadata: bookmarkInput.metadata,
           });
 
           if (bookmarkRows.length === 0) {
             return createErrorResponse(
-              effectiveType === 'both'
+              request.kind === 'both'
                 ? 'Failed to create session bookmark; note was not saved.'
                 : 'Failed to create session bookmark.',
             );
           }
 
           const bm = bookmarkRows[0];
-          const linkedNodes =
-            typeof bm.linkedNodes === 'object' && bm.linkedNodes?.toNumber
-              ? bm.linkedNodes.toNumber()
-              : (bm.linkedNodes ?? 0);
-
-          // Embed the bookmark for semantic recall (Phase 1.5b).
-          // Mirror of the note-embedding pattern below: best-effort, non-fatal.
-          let bookmarkHasEmbedding = false;
-          try {
-            await neo4jService.run(QUERIES.CREATE_SESSION_BOOKMARKS_VECTOR_INDEX(getEmbeddingDimensions()));
-            const embeddingsService = new EmbeddingsService();
-            const embeddingText = [taskContext!, summary!, findings, nextSteps]
-              .filter((s) => s && s.length > 0)
-              .join('\n\n');
-            const embedding = await embeddingsService.embedText(embeddingText);
-            await neo4jService.run(QUERIES.SET_BOOKMARK_EMBEDDING_QUERY, {
-              bookmarkId,
-              projectId: resolvedProjectId,
-              embedding,
-              embeddingProvider: embeddingsService.provider,
-              embeddingModel: embeddingsService.model,
-            });
-            bookmarkHasEmbedding = true;
-          } catch (embErr) {
-            await debugLog('Session save bookmark embedding failed (non-fatal)', {
-              error: String(embErr),
-              bookmarkId,
-            });
-          }
+          const linkedNodes = workingSet.nodeIds.length - workingSet.unresolvedNodeIds.length;
+          const hasEmbedding = await embeddingService.embedBookmark({
+            bookmarkId,
+            projectId: project.projectId,
+            taskContext: bookmarkInput.taskContext,
+            summary: bookmarkInput.summary,
+            findings: bookmarkInput.findings,
+            nextSteps: bookmarkInput.nextSteps,
+          });
 
           result.bookmark = {
             bookmarkId: bm.id,
             summary: bm.summary,
             taskContext: bm.taskContext,
-            workingSetSize: workingSetNodeIds!.length,
+            workingSetSize: workingSet.nodeIds.length,
+            workingSetPaths: workingSet.paths,
             linkedNodes,
-            hasEmbedding: bookmarkHasEmbedding,
-            createdAt:
-              typeof bm.createdAt === 'object' && bm.createdAt?.toNumber ? bm.createdAt.toNumber() : bm.createdAt,
-            message: `Session bookmark saved. ${linkedNodes} of ${workingSetNodeIds!.length} working set nodes linked in graph.`,
+            unresolvedWorkingSetNodeIds: workingSet.unresolvedNodeIds,
+            missingWorkingSetPaths: workingSet.missingPaths,
+            hasEmbedding,
+            createdAt: toNumber(bm.createdAt),
+            message: `Session bookmark saved. ${linkedNodes} of ${workingSet.nodeIds.length} working set nodes linked in graph.`,
           };
         }
 
-        // ── Create note ──────────────────────────────────────────────────────
-        if (effectiveType === 'note' || effectiveType === 'both') {
+        if (noteInput && anchors) {
           const noteId = generateNoteId();
-          const expiresAt = expiresInHours != null ? Date.now() + expiresInHours * 3600 * 1000 : null;
+          const expiresAt =
+            noteInput.expiresInHours != null ? Date.now() + noteInput.expiresInHours * 3600 * 1000 : null;
 
           const noteRows = await neo4jService.run(CREATE_SESSION_NOTE_QUERY, {
             noteId,
-            projectId: resolvedProjectId,
+            projectId: project.projectId,
             sessionId,
             agentId,
-            topic: topic!,
-            content: content!,
-            category: category!,
-            severity,
-            aboutNodeIds,
-            supersededBy,
-            supersedes: [...new Set(supersedes)],
+            topic: noteInput.topic,
+            content: noteInput.content,
+            category: noteInput.category,
+            severity: noteInput.severity,
+            aboutNodeIds: anchors.nodeIds,
+            aboutPaths: anchors.paths,
+            aboutPathHashes: anchors.pathHashes,
+            nodeRefs: anchors.nodeRefs,
+            sourceFileRefs: anchors.sourceFileRefs,
+            supersededBy: noteInput.supersededBy,
+            supersedes: [...new Set(noteInput.supersedes)],
             expiresAt,
           });
 
@@ -350,49 +292,45 @@ export const createSessionSaveTool = (server: McpServer): void => {
             return createErrorResponse('Failed to create session note.');
           }
 
-          let hasEmbedding = false;
-          try {
-            await neo4jService.run(QUERIES.CREATE_SESSION_NOTES_VECTOR_INDEX(getEmbeddingDimensions()));
-            const embeddingsService = new EmbeddingsService();
-            const embeddingText = `${topic}\n\n${content}`;
-            const embedding = await embeddingsService.embedText(embeddingText);
-            await neo4jService.run(SET_NOTE_EMBEDDING_QUERY, {
-              noteId,
-              projectId: resolvedProjectId,
-              embedding,
-              embeddingProvider: embeddingsService.provider,
-              embeddingModel: embeddingsService.model,
-            });
-            hasEmbedding = true;
-          } catch (embErr) {
-            await debugLog('Session save note embedding failed (non-fatal)', { error: String(embErr), noteId });
-          }
+          const hasEmbedding = await embeddingService.embedNote({
+            noteId,
+            projectId: project.projectId,
+            topic: noteInput.topic,
+            content: noteInput.content,
+          });
 
           let chunkCount = 0;
           try {
-            chunkCount = await saveSessionNoteChunks(neo4jService, resolvedProjectId, noteId, content!);
+            chunkCount = await saveSessionNoteChunks(neo4jService, project.projectId, noteId, noteInput.content);
           } catch (chunkErr) {
             await debugLog('Note chunk embedding failed; parent note was saved', { error: String(chunkErr), noteId });
           }
 
           result.note = {
             noteId,
-            topic: topic!,
-            category: category!,
-            severity,
+            topic: noteInput.topic,
+            category: noteInput.category,
+            severity: noteInput.severity,
             hasEmbedding,
             chunkCount,
+            aboutPaths: anchors.paths,
+            unresolvedAboutNodeIds: anchors.unresolvedNodeIds,
+            missingAboutPaths: anchors.missingPaths,
+            ...(anchors.partiallyHashedPaths.length > 0 && {
+              partiallyHashedAboutPaths: anchors.partiallyHashedPaths,
+            }),
             expiresAt: expiresAt != null ? new Date(expiresAt).toISOString() : null,
-            ...(supersedes.length > 0 && {
+            ...(noteInput.supersedes.length > 0 && {
               supersedes: { marked: noteRows[0].markedIds, notFound: noteRows[0].notFoundIds },
             }),
           };
         }
 
-        result.type = effectiveType;
+        result.type = request.kind;
 
         return createSuccessResponse(JSON.stringify(result, null, 2));
       } catch (error) {
+        if (error instanceof InvalidProjectInputError) return createErrorResponse(error);
         await debugLog('Session save error', { error: String(error) });
         return createErrorResponse(error instanceof Error ? error : String(error));
       } finally {

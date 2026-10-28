@@ -7,8 +7,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { createErrorResponse, createSuccessResponse, findProjectOrError, debugLog } from '../utils.js';
 
 type Neo4jServiceType = InstanceType<typeof Neo4jService>;
 
@@ -265,8 +265,9 @@ export const createSwarmCompleteTaskTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmCompleteTask].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmCompleteTask].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmCompleteTask].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         taskId: z.string().describe('Task ID to complete'),
         agentId: z.string().describe('Your agent ID (must match who claimed the task)'),
         action: z
@@ -311,12 +312,12 @@ export const createSwarmCompleteTaskTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
 
       // Resolve project ID
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         let result;

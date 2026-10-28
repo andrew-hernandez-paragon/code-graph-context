@@ -12,8 +12,8 @@ import { join } from 'path';
 import * as parcelWatcher from '@parcel/watcher';
 import type { AsyncSubscription } from '@parcel/watcher';
 
+import { ProjectService } from '../../core/projects/index.js';
 import { planIngestDeliberate } from '../../ingestors/deliberate/index.js';
-import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { debugLog } from '../utils.js';
 
@@ -41,6 +41,8 @@ export interface DeliberateWatcherRecord {
   lastActivityAt: Date | null;
   lastErrorAt: Date | null;
   lastError: string | null;
+  /** Project ids in the latest ingest that have no Project node; edges to them were skipped. */
+  unknownProjectIds: string[];
   cursor: FileCursor;
 }
 
@@ -50,6 +52,7 @@ export interface DeliberateWatcherInfo {
   lastActivityAt: string | null;
   lastErrorAt: string | null;
   lastError: string | null;
+  unknownProjectIds: string[];
   rowsProcessed: number;
   isProcessing: boolean;
 }
@@ -138,6 +141,7 @@ class DeliberateWatchManager {
       debounceTimer: null,
       isProcessing: false,
       isStopping: false,
+      unknownProjectIds: [],
       rowsProcessed: 0,
       lastActivityAt: null,
       lastErrorAt: null,
@@ -215,6 +219,7 @@ class DeliberateWatchManager {
       lastActivityAt: rec.lastActivityAt?.toISOString() ?? null,
       lastErrorAt: rec.lastErrorAt?.toISOString() ?? null,
       lastError: rec.lastError,
+      unknownProjectIds: rec.unknownProjectIds,
       rowsProcessed: rec.rowsProcessed,
       isProcessing: rec.isProcessing,
     };
@@ -252,11 +257,7 @@ class DeliberateWatchManager {
 
       const neo4j = new Neo4jService();
       try {
-        // Ensure Project nodes exist for every projectId referenced
-        for (const projectId of projectIds) {
-          await ensureProjectNode(neo4j, projectId, { synthetic: isSyntheticProjectId(projectId) });
-        }
-
+        rec.unknownProjectIds = await new ProjectService(neo4j).findUnregisteredIds(projectIds);
         for (const e of emits) {
           await neo4j.run(e.query, e.params as Record<string, unknown>);
         }
@@ -266,7 +267,13 @@ class DeliberateWatchManager {
 
       rec.rowsProcessed += newRows;
       rec.lastActivityAt = new Date();
-      await debugLog('deliberate ingest complete', { watchId: rec.watchId, newRows, emits: emits.length, stats });
+      await debugLog('deliberate ingest complete', {
+        watchId: rec.watchId,
+        newRows,
+        emits: emits.length,
+        stats,
+        unknownProjectIds: rec.unknownProjectIds,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       rec.lastError = msg;

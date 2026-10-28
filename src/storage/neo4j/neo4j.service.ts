@@ -1,9 +1,11 @@
-import neo4j, { Driver } from 'neo4j-driver';
+import neo4j, { Driver, SessionMode } from 'neo4j-driver';
 
 import { MAX_TRAVERSAL_DEPTH } from '../../constants.js';
 import { getTimeoutConfig } from '../../core/config/timeouts.js';
 
 import { getNeo4jConnection } from './neo4j-connection.js';
+import { nearestNeighborsPerRow } from './project-vector-search.js';
+import { CYPHER_25_PREFIX, createProjectFilteredVectorIndexQuery, VECTOR_INDEXES } from './vector-indexes.js';
 export class Neo4jService {
   private driver: Driver;
 
@@ -22,7 +24,16 @@ export class Neo4jService {
   }
 
   public async run(query: string, params: Record<string, any> = {}) {
-    const session = this.driver.session();
+    return this.execute(query, params, neo4j.session.WRITE);
+  }
+
+  /** Runs a query in a read session, so Neo4j rejects any write it attempts. For Cypher this server did not write. */
+  public async runReadOnly(query: string, params: Record<string, any> = {}) {
+    return this.execute(query, params, neo4j.session.READ);
+  }
+
+  private async execute(query: string, params: Record<string, any>, defaultAccessMode: SessionMode) {
+    const session = this.driver.session({ defaultAccessMode });
     const timeoutConfig = getTimeoutConfig();
     try {
       const result = await session.run(query, params, {
@@ -200,14 +211,8 @@ export const QUERIES = {
     ORDER BY count DESC
   `,
 
-  CREATE_EMBEDDED_VECTOR_INDEX: (dimensions: number) => `
-  CREATE VECTOR INDEX embedded_nodes_idx IF NOT EXISTS
-  FOR (n:Embedded) ON (n.embedding)
-  OPTIONS {indexConfig: {
-    \`vector.dimensions\`: ${dimensions},
-    \`vector.similarity_function\`: 'cosine'
-  }}
-`,
+  CREATE_EMBEDDED_VECTOR_INDEX: (dimensions: number) =>
+    createProjectFilteredVectorIndexQuery(VECTOR_INDEXES.embeddedNodes, dimensions),
 
   // Lexical companion to embedded_nodes_idx. Covers the same :Embedded nodes
   // over two properties already written at parse time, so it needs no ingest
@@ -226,28 +231,16 @@ export const QUERIES = {
   }}
 `,
 
-  CREATE_SESSION_NOTES_VECTOR_INDEX: (dimensions: number) => `
-  CREATE VECTOR INDEX session_notes_idx IF NOT EXISTS
-  FOR (n:SessionNote) ON (n.embedding)
-  OPTIONS {indexConfig: {
-    \`vector.dimensions\`: ${dimensions},
-    \`vector.similarity_function\`: 'cosine'
-  }}
-`,
+  CREATE_SESSION_NOTES_VECTOR_INDEX: (dimensions: number) =>
+    createProjectFilteredVectorIndexQuery(VECTOR_INDEXES.sessionNotes, dimensions),
 
   // Parent-child GraphRAG: long SessionNote content is also chunked into
   // :SessionNoteChunk nodes linked back via :PART_OF. Each chunk gets its
   // own embedding so vector recall surfaces specific facts buried in long
   // architectural notes; renderers always traverse :PART_OF to return the
   // parent SessionNote for display.
-  CREATE_SESSION_NOTE_CHUNKS_VECTOR_INDEX: (dimensions: number) => `
-  CREATE VECTOR INDEX session_note_chunks_idx IF NOT EXISTS
-  FOR (c:SessionNoteChunk) ON (c.embedding)
-  OPTIONS {indexConfig: {
-    \`vector.dimensions\`: ${dimensions},
-    \`vector.similarity_function\`: 'cosine'
-  }}
-`,
+  CREATE_SESSION_NOTE_CHUNKS_VECTOR_INDEX: (dimensions: number) =>
+    createProjectFilteredVectorIndexQuery(VECTOR_INDEXES.sessionNoteChunks, dimensions),
 
   // Lookup index for chunks-by-parent and projectId-filtered scans.
   CREATE_SESSION_NOTE_CHUNK_INDEX:
@@ -290,14 +283,17 @@ export const QUERIES = {
     DETACH DELETE c
   `,
 
-  CREATE_SESSION_BOOKMARKS_VECTOR_INDEX: (dimensions: number) => `
-  CREATE VECTOR INDEX session_bookmarks_idx IF NOT EXISTS
-  FOR (n:SessionBookmark) ON (n.embedding)
-  OPTIONS {indexConfig: {
-    \`vector.dimensions\`: ${dimensions},
-    \`vector.similarity_function\`: 'cosine'
-  }}
-`,
+  CREATE_SESSION_BOOKMARKS_VECTOR_INDEX: (dimensions: number) =>
+    createProjectFilteredVectorIndexQuery(VECTOR_INDEXES.sessionBookmarks, dimensions),
+
+  SET_NOTE_EMBEDDING_QUERY: `
+    MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
+    SET n.embedding = $embedding,
+        n.embeddingProvider = $embeddingProvider,
+        n.embeddingModel = $embeddingModel,
+        n.embeddingDimensions = size($embedding)
+    RETURN n.id AS noteId
+  `,
 
   SET_BOOKMARK_EMBEDDING_QUERY: `
     MATCH (b:SessionBookmark {id: $bookmarkId, projectId: $projectId})
@@ -315,24 +311,6 @@ export const QUERIES = {
     'CREATE INDEX session_note_idx IF NOT EXISTS FOR (n:SessionNote) ON (n.projectId, n.sessionId)',
   CREATE_SESSION_NOTE_CATEGORY_INDEX:
     'CREATE INDEX session_note_category_idx IF NOT EXISTS FOR (n:SessionNote) ON (n.projectId, n.category)',
-
-  // Vector search with configurable fetch multiplier for project filtering.
-  // fetchMultiplier (default: 10) controls how many extra results to fetch before filtering by projectId.
-  // minSimilarity (default: 0.3) filters out low-confidence matches for nonsense queries.
-  // Higher values = more accurate results but slower; lower values = faster but may miss results.
-  VECTOR_SEARCH: `
-  CALL db.index.vector.queryNodes('embedded_nodes_idx', toInteger($limit * coalesce($fetchMultiplier, 10)), $embedding)
-  YIELD node, score
-  WHERE node.projectId = $projectId AND score >= coalesce($minSimilarity, 0.3)
-  WITH node, score
-  LIMIT toInteger($limit)
-  RETURN {
-    id: node.id,
-    labels: labels(node),
-    properties: apoc.map.removeKeys(properties(node), ['embedding', 'contentHash', 'mtime', 'size'])
-  } as node, score
-  ORDER BY score DESC
-`,
 
   // Check if index exists
   CHECK_VECTOR_INDEX: `
@@ -396,22 +374,54 @@ export const QUERIES = {
   // excludes the session and coordination labels.
 
   // SessionNote -[:ABOUT]-> code  (uses aboutNodeIds property added in 1.3)
+  // Notes and bookmarks in any project may anchor to the reparsed project's code, so they are found by
+  // node id prefix ($projectIdPrefix = projectId + ':'), not by their own projectId.
   RECREATE_ABOUT_EDGES: `
-    MATCH (n:SessionNote {projectId: $projectId})
-    WHERE n.aboutNodeIds IS NOT NULL AND size(n.aboutNodeIds) > 0
+    MATCH (n:SessionNote)
+    WHERE any(id IN coalesce(n.aboutNodeIds, []) WHERE id STARTS WITH $projectIdPrefix)
     UNWIND n.aboutNodeIds AS aboutId
+    WITH n, aboutId
+    WHERE aboutId STARTS WITH $projectIdPrefix
     MATCH (target:GraphNode {id: aboutId, projectId: $projectId})
     MERGE (n)-[r:ABOUT]->(target)
     RETURN count(r) AS recreated
   `,
 
+  // SessionNote -[:ABOUT]-> SourceFile for anchor paths under the reparsed codebase's root
+  RECREATE_ABOUT_PATH_EDGES: `
+    MATCH (n:SessionNote)
+    WHERE $rootPrefix IS NOT NULL
+      AND any(path IN coalesce(n.aboutPaths, []) WHERE path STARTS WITH $rootPrefix)
+    UNWIND n.aboutPaths AS aboutPath
+    WITH n, aboutPath
+    WHERE aboutPath STARTS WITH $rootPrefix
+    MATCH (file:SourceFile {projectId: $projectId, filePath: aboutPath})
+    MERGE (n)-[r:ABOUT]->(file)
+    RETURN count(r) AS recreated
+  `,
+
   // SessionBookmark -[:REFERENCES]-> code  (workingSetNodeIds already a property)
   RECREATE_REFERENCES_EDGES: `
-    MATCH (b:SessionBookmark {projectId: $projectId})
-    WHERE b.workingSetNodeIds IS NOT NULL AND size(b.workingSetNodeIds) > 0
+    MATCH (b:SessionBookmark)
+    WHERE any(id IN coalesce(b.workingSetNodeIds, []) WHERE id STARTS WITH $projectIdPrefix)
     UNWIND b.workingSetNodeIds AS targetId
+    WITH b, targetId
+    WHERE targetId STARTS WITH $projectIdPrefix
     MATCH (target:GraphNode {id: targetId, projectId: $projectId})
     MERGE (b)-[r:REFERENCES]->(target)
+    RETURN count(r) AS recreated
+  `,
+
+  // SessionBookmark -[:REFERENCES]-> SourceFile for working set paths under the reparsed codebase's root
+  RECREATE_REFERENCES_PATH_EDGES: `
+    MATCH (b:SessionBookmark)
+    WHERE $rootPrefix IS NOT NULL
+      AND any(path IN coalesce(b.workingSetPaths, []) WHERE path STARTS WITH $rootPrefix)
+    UNWIND b.workingSetPaths AS workingSetPath
+    WITH b, workingSetPath
+    WHERE workingSetPath STARTS WITH $rootPrefix
+    MATCH (file:SourceFile {projectId: $projectId, filePath: workingSetPath})
+    MERGE (b)-[r:REFERENCES]->(file)
     RETURN count(r) AS recreated
   `,
 
@@ -431,9 +441,11 @@ export const QUERIES = {
   // do not resolve to a current node in the graph. Surfaced in parse summary
   // so users see which notes have orphaned references after reparse.
   COUNT_STALE_ABOUT_REFS: `
-    MATCH (n:SessionNote {projectId: $projectId})
-    WHERE n.aboutNodeIds IS NOT NULL AND size(n.aboutNodeIds) > 0
+    MATCH (n:SessionNote)
+    WHERE any(id IN coalesce(n.aboutNodeIds, []) WHERE id STARTS WITH $projectIdPrefix)
     UNWIND n.aboutNodeIds AS aboutId
+    WITH n, aboutId
+    WHERE aboutId STARTS WITH $projectIdPrefix
     OPTIONAL MATCH (target:GraphNode {id: aboutId, projectId: $projectId})
     WITH n.id AS noteId, aboutId, target
     WHERE target IS NULL
@@ -1027,15 +1039,23 @@ export const QUERIES = {
    * Note: Requires the vector index 'embedded_nodes_idx' to exist.
    */
   FIND_SEMANTIC_DUPLICATES: `
+    ${CYPHER_25_PREFIX}
     MATCH (n1)
     WHERE n1.projectId = $projectId
       AND n1.coreType IN $coreTypes
       AND n1.embedding IS NOT NULL
     WITH n1
-    CALL db.index.vector.queryNodes('embedded_nodes_idx', toInteger($vectorNeighbors), n1.embedding)
-    YIELD node AS n2, score AS similarity
-    WHERE n2.projectId = $projectId
-      AND n2.coreType IN $coreTypes
+    ${nearestNeighborsPerRow({
+      index: VECTOR_INDEXES.embeddedNodes,
+      node: 'n2',
+      score: 'similarity',
+      queryVector: 'n1.embedding',
+      neighbors: '$vectorNeighbors',
+      projectIds: '[n1.projectId]',
+      outerVariables: ['n1'],
+    })}
+    WITH n1, n2, similarity
+    WHERE n2.coreType IN $coreTypes
       AND n1.id < n2.id
       AND similarity >= $minSimilarity
       AND n1.filePath <> n2.filePath

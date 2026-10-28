@@ -14,8 +14,11 @@ import {
   getEmbeddingDimensions,
   getEmbeddingModel,
 } from '../core/embeddings/embeddings.service.js';
-import { LIST_PROJECTS_QUERY } from '../core/utils/project-id.js';
+import { ProjectService } from '../core/projects/index.js';
+import { toNumber } from '../core/utils/shared-utils.js';
+import { describeOldNeo4j, readNeo4jVersion, supportsProjectFilteredSearch } from '../storage/neo4j/neo4j-version.js';
 import { Neo4jService, QUERIES } from '../storage/neo4j/neo4j.service.js';
+import { rebuildVectorIndexesWithProjectFilter } from '../storage/neo4j/project-filter-index-migration.js';
 
 import { FILE_PATHS, LOG_CONFIG } from './constants.js';
 import { STARTUP_RETRY_INTERVAL_MS, createNeo4jStartupService, retryInBackground } from './neo4j-startup.js';
@@ -138,12 +141,16 @@ const initializeNeo4jDependentServices = async (): Promise<void> => {
   // Initialize services sequentially - schema must be written before NL service reads it
   await initializeNeo4jSchema();
 
-  // Idempotent backfill of new SessionNote properties added in Phase 1.3.
-  // Runs every startup; subsequent runs are no-ops once all notes are migrated.
+  // Idempotent: sets Project.kind on nodes written by servers that predate it.
+  await backfillProjectKinds();
+
+  // Before the steps below write or index vectors, so none of them recreates an unfiltered index.
+  await rebuildVectorIndexes();
+
+  // Idempotent: a second start finds no notes left to migrate.
   await migrateSessionNoteProperties();
 
-  // Idempotent backfill of SessionBookmark embeddings (Phase 1.5b).
-  // Paginated; resumable across restarts; non-fatal if embeddings unavailable.
+  // Idempotent, resumable across restarts, and non-fatal when embeddings are unavailable.
   await backfillBookmarkEmbeddings();
 
   // Idempotent creation of the BM25 index behind hybrid code search (0014).
@@ -167,10 +174,56 @@ const initializeNeo4jDependentServices = async (): Promise<void> => {
   }
 };
 
+const rebuildVectorIndexes = async (): Promise<void> => {
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      const version = await readNeo4jVersion(neo4jService);
+      if (version !== null && !supportsProjectFilteredSearch(version)) {
+        logError(describeOldNeo4j(version));
+        return;
+      }
+      const results = await rebuildVectorIndexesWithProjectFilter(neo4jService, getEmbeddingDimensions());
+      for (const { indexName, outcome, reason } of results) {
+        if (outcome === 'failed') {
+          logError(
+            `Vector index ${indexName} could not be rebuilt with the projectId filter: ${reason}. Searching it will fail until the index is online.`,
+          );
+        } else {
+          logInfo(`Vector index ${indexName}: ${outcome}`);
+        }
+      }
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    logError(
+      `Vector index rebuild failed: ${describeError(error)}. Searching an index that lacks the projectId filter will fail until it is online.`,
+    );
+  }
+};
+
+const backfillProjectKinds = async (): Promise<void> => {
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      const backfilled = await new ProjectService(neo4jService).backfillKinds();
+      if (backfilled > 0) {
+        logInfo(`Set the kind of ${backfilled} Project node(s)`);
+      }
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    // Reads fall back to the same rule through projectKindCypher, so a failed backfill loses nothing.
+    logError(`Project kind backfill skipped: ${describeError(error)}`);
+  }
+};
+
 /**
- * Backfill SessionNote properties added in Phase 1.3:
+ * Backfill SessionNote properties added after the first notes were written:
  *   - aboutNodeIds: recovered from existing :ABOUT edges so the post-parse
- *     edge recovery (Phase 1.4) can re-link after a reparse.
+ *     edge recovery can re-link after a reparse.
  *   - lastValidated: defaults to createdAt for old notes; subsequent saves /
  *     updates bump it to timestamp().
  *
@@ -197,32 +250,19 @@ const migrateSessionNoteProperties = async (): Promise<void> => {
     try {
       const result = await neo4jService.run(MIGRATE_SESSION_NOTE_PROPERTIES_QUERY, {});
       const migrated = result[0]?.migrated;
-      const count =
-        typeof migrated === 'object' && migrated && 'toNumber' in migrated
-          ? (migrated as any).toNumber()
-          : (migrated ?? 0);
+      const count = toNumber(migrated);
       if (count > 0) {
-        console.error(
-          JSON.stringify({
-            level: 'info',
-            message: `[code-graph-context] Migrated ${count} SessionNote(s) to Phase 1.3 schema`,
-          }),
-        );
+        logInfo(`Migrated ${count} SessionNote(s) to the current schema`);
       }
       await debugLog('SessionNote property migration complete', { migrated: count });
     } finally {
       await neo4jService.close();
     }
   } catch (error) {
-    // Migration is non-fatal — log but don't block startup. New notes will
+    // Migration is non-fatal, log but don't block startup. New notes will
     // populate the new properties; old notes can be re-migrated next startup.
     await debugLog('SessionNote property migration failed (non-fatal)', { error: String(error) });
-    console.error(
-      JSON.stringify({
-        level: 'warn',
-        message: `[code-graph-context] SessionNote migration skipped: ${error instanceof Error ? error.message : String(error)}`,
-      }),
-    );
+    logError(`SessionNote migration skipped: ${describeError(error)}`);
   }
 };
 
@@ -267,9 +307,9 @@ const ensureCodeNodeLookupIndexes = async (): Promise<void> => {
 };
 
 /**
- * Backfill embeddings for SessionBookmark nodes that don't have one yet
- * (Phase 1.5b). Cypher can't call the embedding service, so this is
- * application-side code — paginated, idempotent, resumable across restarts.
+ * Backfill embeddings for SessionBookmark nodes that don't have one yet.
+ * Cypher can't call the embedding service, so this is
+ * application-side code, paginated, idempotent, resumable across restarts.
  *
  * Runs at MCP startup. On the first startup after upgrade, walks the bookmark
  * corpus 100 at a time and embeds each. Subsequent startups touch zero rows.
@@ -316,7 +356,7 @@ const backfillBookmarkEmbeddings = async (): Promise<void> => {
               .filter((s: any) => typeof s === 'string' && s.length > 0)
               .join('\n\n');
             if (text.length === 0) {
-              // Empty bookmark — set a placeholder zero-vector to avoid re-trying forever.
+              // Empty bookmark, set a placeholder zero-vector to avoid re-trying forever.
               // Better to skip via a sentinel; for now mark with a dummy embedding so the
               // WHERE n.embedding IS NULL filter excludes it.
               continue;
@@ -343,12 +383,7 @@ const backfillBookmarkEmbeddings = async (): Promise<void> => {
       }
 
       if (totalMigrated > 0) {
-        console.error(
-          JSON.stringify({
-            level: 'info',
-            message: `[code-graph-context] Backfilled embeddings for ${totalMigrated} SessionBookmark(s)`,
-          }),
-        );
+        logInfo(`Backfilled embeddings for ${totalMigrated} SessionBookmark(s)`);
       }
       await debugLog('SessionBookmark embedding backfill complete', { migrated: totalMigrated });
     } finally {
@@ -356,12 +391,7 @@ const backfillBookmarkEmbeddings = async (): Promise<void> => {
     }
   } catch (error) {
     await debugLog('SessionBookmark embedding backfill failed (non-fatal)', { error: String(error) });
-    console.error(
-      JSON.stringify({
-        level: 'warn',
-        message: `[code-graph-context] Bookmark embedding backfill skipped: ${error instanceof Error ? error.message : String(error)}`,
-      }),
-    );
+    logError(`Bookmark embedding backfill skipped: ${describeError(error)}`);
   }
 };
 
@@ -415,9 +445,9 @@ const initializeNeo4jSchema = async (): Promise<void> => {
   try {
     const neo4jService = new Neo4jService();
 
-    // Find the most recently updated project to scope discovery queries
-    const projects = await neo4jService.run(LIST_PROJECTS_QUERY, { includeSynthetic: false });
-    const projectId = projects.length > 0 ? (projects[0].projectId as string) : null;
+    // Find the most recently updated codebase to scope discovery queries
+    const codebases = await new ProjectService(neo4jService).list(['codebase']);
+    const projectId = codebases.length > 0 ? codebases[0].projectId : null;
 
     // Dynamically discover what's actually in the graph
     const schema = projectId ? await discoverSchemaFromGraph(neo4jService, projectId) : null;

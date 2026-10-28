@@ -9,8 +9,8 @@ import { join } from 'path';
 import { CORE_TYPESCRIPT_SCHEMA } from '../../core/config/schema.js';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { ParserFactory } from '../../core/parsers/parser-factory.js';
+import { getProjectName, ProjectService } from '../../core/projects/index.js';
 import { detectChangedFiles } from '../../core/utils/file-change-detection.js';
-import { resolveProjectId, getProjectName, UPSERT_PROJECT_QUERY } from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { FILE_PATHS, LOG_CONFIG } from '../constants.js';
 import { debugLog } from '../utils.js';
@@ -22,6 +22,7 @@ import {
   getCrossFileEdges,
 } from './cross-file-edge.helpers.js';
 import { GraphGeneratorHandler } from './graph-generator.handler.js';
+import { recoverSessionEdges } from './session-edge-recovery.helpers.js';
 
 interface IncrementalParseResult {
   nodesUpdated: number;
@@ -46,15 +47,13 @@ export const performIncrementalParse = async (
   try {
     await debugLog('Incremental parse started', { projectPath, projectId });
 
-    // Resolve project ID
-    const resolvedId = resolveProjectId(projectPath, projectId);
     const projectName = await getProjectName(projectPath);
 
     // Create parser with auto-detection and lazy loading enabled for memory efficiency
-    const parser = await ParserFactory.createParserWithAutoDetection(projectPath, tsconfigPath, resolvedId, true);
+    const parser = await ParserFactory.createParserWithAutoDetection(projectPath, tsconfigPath, projectId, true);
 
     // Detect changed files
-    const { filesToReparse, filesToDelete } = await detectChangedFiles(projectPath, neo4jService, resolvedId);
+    const { filesToReparse, filesToDelete } = await detectChangedFiles(projectPath, neo4jService, projectId);
 
     await debugLog('Incremental change detection', {
       filesToReparse: filesToReparse.length,
@@ -80,12 +79,12 @@ export const performIncrementalParse = async (
     if (filesToRemoveFromGraph.length > 0) {
       await debugLog('Incremental parse: getting cross-file edges', { count: filesToRemoveFromGraph.length });
       // Save cross-file edges before deletion
-      savedCrossFileEdges = await getCrossFileEdges(neo4jService, filesToRemoveFromGraph, resolvedId);
+      savedCrossFileEdges = await getCrossFileEdges(neo4jService, filesToRemoveFromGraph, projectId);
       await debugLog('Incremental parse: got cross-file edges', { savedCount: savedCrossFileEdges.length });
 
       await debugLog('Incremental parse: deleting old subgraphs', {});
       // Delete old subgraphs
-      await deleteSourceFileSubgraphs(neo4jService, filesToRemoveFromGraph, resolvedId);
+      await deleteSourceFileSubgraphs(neo4jService, filesToRemoveFromGraph, projectId);
       await debugLog('Incremental parse: deleted old subgraphs', {});
     }
 
@@ -95,7 +94,7 @@ export const performIncrementalParse = async (
     if (filesToReparse.length > 0) {
       await debugLog('Incremental parse: loading existing nodes', {});
       // Load existing nodes for edge detection
-      const existingNodes = await loadExistingNodesForEdgeDetection(neo4jService, filesToRemoveFromGraph, resolvedId);
+      const existingNodes = await loadExistingNodesForEdgeDetection(neo4jService, filesToRemoveFromGraph, projectId);
       await debugLog('Incremental parse: loaded existing nodes', { count: existingNodes.length });
       parser.setExistingNodes(existingNodes);
 
@@ -123,7 +122,7 @@ export const performIncrementalParse = async (
           coreSchema: CORE_TYPESCRIPT_SCHEMA.name,
           frameworkSchemas,
           projectType: 'auto',
-          projectId: resolvedId,
+          projectId,
           generated: new Date().toISOString(),
         },
       };
@@ -136,8 +135,8 @@ export const performIncrementalParse = async (
 
       // Update Project node
       await debugLog('Incremental parse: updating project node', {});
-      await neo4jService.run(UPSERT_PROJECT_QUERY, {
-        projectId: resolvedId,
+      await new ProjectService(neo4jService).upsertCodebase({
+        projectId,
         path: projectPath,
         name: projectName,
         status: 'complete',
@@ -146,7 +145,7 @@ export const performIncrementalParse = async (
 
       // Import nodes and edges (clearExisting = false for incremental)
       await debugLog('Incremental parse: starting graph import', {});
-      graphHandler.setProjectId(resolvedId);
+      graphHandler.setProjectId(projectId);
       try {
         const result = await graphHandler.generateGraph(outputPath, false);
         nodesImported = result.nodesImported;
@@ -165,7 +164,7 @@ export const performIncrementalParse = async (
       // Recreate cross-file edges
       if (savedCrossFileEdges.length > 0) {
         const recreateResult = await neo4jService.run(QUERIES.RECREATE_CROSS_FILE_EDGES, {
-          projectId: resolvedId,
+          projectId,
           edges: savedCrossFileEdges.map((e) => ({
             startNodeId: e.startNodeId,
             endNodeId: e.endNodeId,
@@ -182,6 +181,9 @@ export const performIncrementalParse = async (
         edgesImported += recreatedCount;
       }
     }
+
+    // Deleting a file's subgraph deleted the :ABOUT, :REFERENCES and :MARKS edges that pointed at it.
+    await recoverSessionEdges(neo4jService, projectId);
 
     await debugLog('Incremental parse completed', {
       nodesImported,

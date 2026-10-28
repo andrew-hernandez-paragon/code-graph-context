@@ -15,6 +15,7 @@ export const createListWatchersTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.listWatchers].title,
       description: TOOL_METADATA[TOOL_NAMES.listWatchers].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.listWatchers].annotations,
       inputSchema: {},
     },
     async () => {

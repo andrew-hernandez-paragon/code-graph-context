@@ -1,106 +1,91 @@
 /**
- * Session Update Tool (Phase 1.5c)
- *
- * In-place revision of an existing SessionNote. Designed for the small-edit
- * case so the corpus stays clean instead of accumulating a chain of
- * near-identical superseded notes for every typo.
- *
- * Use this for:
- *   - typo / clarity polish
- *   - severity change (info ↔ warning ↔ critical)
- *   - lastValidated bump (re-confirmed against current code)
- *   - minor content correction
- *   - aboutNodeIds resync (file moved / symbol renamed)
- *   - tombstoning (set supersededBy to any non-null value)
- *
- * Use session_save with `supersedes: [<oldId>]` for substantive content
- * changes or decision reversals: that preserves history as a new note and
- * marks the old one superseded by it.
+ * Session Update Tool
+ * Revises an existing SessionNote in place; session_save with `supersedes` replaces a note and keeps its history.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { EmbeddingsService, getEmbeddingDimensions } from '../../core/embeddings/embeddings.service.js';
-import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
+import { InvalidProjectInputError, ProjectService } from '../../core/projects/index.js';
+import { NOTE_CATEGORIES, NOTE_SEVERITIES } from '../../core/session/note-vocabulary.js';
+import { SessionEmbeddingService } from '../../core/session/session-embedding.service.js';
+import { toNumber } from '../../core/utils/shared-utils.js';
+import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { SessionAnchorService } from '../handlers/session-anchor.service.js';
 import { saveSessionNoteChunks } from '../handlers/session-note-chunks.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { createErrorResponse, createSuccessResponse, findProjectOrError, debugLog } from '../utils.js';
 
-// ---------------------------------------------------------------------------
-// Cypher
-// ---------------------------------------------------------------------------
+const FIND_NOTE_ANCHORS_QUERY = `
+  MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
+  RETURN coalesce(n.aboutNodeIds, []) AS aboutNodeIds, coalesce(n.aboutPaths, []) AS aboutPaths
+`;
 
 /**
  * Update only the provided fields on a SessionNote and bump `lastValidated`.
+ * The anchors are always written (the stored ones when the caller sent none) so the
+ * path hashes are taken again: an update means the note was checked against the current code.
  *
  * `supersededByProvided` allows the caller to explicitly clear `supersededBy`
- * by passing `null` — distinguishable from "field not provided."
+ * by passing `null`, distinguishable from "field not provided."
  */
-const UPDATE_NOTE_QUERY = `
+export const UPDATE_NOTE_QUERY = `
   MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
-  WITH n,
-       n.aboutNodeIds AS oldAboutNodeIds,
-       coalesce($aboutNodeIds, n.aboutNodeIds) AS newAboutNodeIds
-  SET n.content       = coalesce($content,    n.content),
-      n.topic         = coalesce($topic,      n.topic),
-      n.category      = coalesce($category,   n.category),
-      n.severity      = coalesce($severity,   n.severity),
-      n.aboutNodeIds  = newAboutNodeIds,
-      n.supersededBy  = CASE WHEN $supersededByProvided THEN $supersededBy ELSE n.supersededBy END,
-      n.lastValidated = timestamp()
-  WITH n, oldAboutNodeIds, newAboutNodeIds
+  SET n.content         = coalesce($content,    n.content),
+      n.topic           = coalesce($topic,      n.topic),
+      n.category        = coalesce($category,   n.category),
+      n.severity        = coalesce($severity,   n.severity),
+      n.aboutNodeIds    = $aboutNodeIds,
+      n.aboutPaths      = $aboutPaths,
+      n.aboutPathHashes = $aboutPathHashes,
+      n.supersededBy    = CASE WHEN $supersededByProvided THEN $supersededBy ELSE n.supersededBy END,
+      n.lastValidated   = timestamp()
+  WITH n
   OPTIONAL MATCH (c:SessionNoteChunk {projectId: $projectId, parentNoteId: $noteId})
   WHERE $content IS NOT NULL
-  WITH n, oldAboutNodeIds, newAboutNodeIds, collect(c) AS staleChunks
+  WITH n, collect(c) AS staleChunks
   FOREACH (c IN staleChunks | DETACH DELETE c)
   RETURN n.id AS noteId,
          n.topic AS topic,
          n.content AS content,
          n.category AS category,
          n.severity AS severity,
-         n.aboutNodeIds AS aboutNodeIds,
          n.supersededBy AS supersededBy,
-         n.lastValidated AS lastValidated,
-         oldAboutNodeIds,
-         newAboutNodeIds,
-         (oldAboutNodeIds <> newAboutNodeIds) AS aboutNodeIdsChanged
+         n.lastValidated AS lastValidated
 `;
 
 /**
- * Drop existing :ABOUT edges from the note before recreating them with the
- * updated aboutNodeIds. Used only when aboutNodeIds changed.
+ * Drop existing :ABOUT edges from the note before recreating them from its
+ * anchors. Used only when the caller sent aboutNodeIds or aboutPaths.
  */
-const DROP_ABOUT_EDGES_QUERY = `
+export const DROP_ABOUT_EDGES_QUERY = `
   MATCH (n:SessionNote {id: $noteId, projectId: $projectId})-[r:ABOUT]->()
   DELETE r
   RETURN count(r) AS dropped
 `;
 
 /**
- * Recreate :ABOUT edges from the note to its current aboutNodeIds. Targets
- * match :GraphNode, which excludes session and coordination nodes.
+ * Recreate :ABOUT edges from the note to its code nodes (in any codebase) and to the
+ * SourceFile of each anchor path inside a codebase. Targets match :GraphNode, which
+ * excludes session and coordination nodes.
  */
 export const RECREATE_NOTE_ABOUT_EDGES_QUERY = `
   MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
-  UNWIND $aboutNodeIds AS aboutId
-  MATCH (target:GraphNode {id: aboutId, projectId: $projectId})
-  MERGE (n)-[r:ABOUT]->(target)
-  RETURN count(r) AS created
+  CALL (n) {
+    UNWIND $nodeRefs AS ref
+    MATCH (target:GraphNode {id: ref.id, projectId: ref.projectId})
+    MERGE (n)-[r:ABOUT]->(target)
+    RETURN count(r) AS nodeEdges
+  }
+  CALL (n) {
+    UNWIND $sourceFileRefs AS fileRef
+    MATCH (file:SourceFile {projectId: fileRef.projectId, filePath: fileRef.filePath})
+    MERGE (n)-[r:ABOUT]->(file)
+    RETURN count(r) AS fileEdges
+  }
+  RETURN nodeEdges + fileEdges AS created
 `;
-
-const SET_NOTE_EMBEDDING_QUERY = `
-  MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
-  SET n.embedding = $embedding,
-      n.embeddingProvider = $embeddingProvider,
-      n.embeddingModel = $embeddingModel,
-      n.embeddingDimensions = size($embedding)
-  RETURN n.id AS noteId
-`;
-
-// ---------------------------------------------------------------------------
-// Tool registration
-// ---------------------------------------------------------------------------
 
 export const createSessionUpdateTool = (server: McpServer): void => {
   server.registerTool(
@@ -108,20 +93,26 @@ export const createSessionUpdateTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.sessionUpdate].title,
       description: TOOL_METADATA[TOOL_NAMES.sessionUpdate].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.sessionUpdate].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         noteId: z.string().describe('ID of the SessionNote to update'),
         topic: z.string().min(3).max(100).optional().describe('Replace the topic label'),
         content: z.string().min(10).optional().describe('Replace the content. Triggers re-embedding.'),
-        category: z
-          .enum(['architectural', 'bug', 'insight', 'decision', 'risk', 'todo'])
-          .optional()
-          .describe('Replace the category'),
-        severity: z.enum(['info', 'warning', 'critical']).optional().describe('Replace the severity'),
+        category: z.enum(NOTE_CATEGORIES).optional().describe('Replace the category'),
+        severity: z.enum(NOTE_SEVERITIES).optional().describe('Replace the severity'),
         aboutNodeIds: z
           .array(z.string())
           .optional()
-          .describe('Replace the set of code nodes this note references. Triggers :ABOUT edge resync.'),
+          .describe(
+            'Replace the set of code nodes this note references. They may belong to any codebase. Triggers :ABOUT edge resync.',
+          ),
+        aboutPaths: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Replace the files and folders this note is about. Absolute, ~/ or relative to the project directory. Triggers :ABOUT edge resync.',
+          ),
         supersededBy: z
           .string()
           .nullable()
@@ -132,7 +123,7 @@ export const createSessionUpdateTool = (server: McpServer): void => {
       },
     },
     async (args) => {
-      const { projectId, noteId, topic, content, category, severity, aboutNodeIds } = args;
+      const { projectId, noteId, topic, content, category, severity, aboutNodeIds, aboutPaths } = args;
 
       // Distinguish "not provided" from "explicitly null" for supersededBy.
       const supersededByProvided = Object.prototype.hasOwnProperty.call(args, 'supersededBy');
@@ -140,15 +131,25 @@ export const createSessionUpdateTool = (server: McpServer): void => {
 
       const neo4jService = new Neo4jService();
 
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
-      if (!projectResult.success) {
-        await neo4jService.close();
-        return projectResult.error;
-      }
-      const resolvedProjectId = projectResult.projectId;
-
       try {
-        // Apply the SET. Returns empty rows if the note doesn't exist.
+        const projectResult = await findProjectOrError(projectId, neo4jService);
+        if (!projectResult.success) return projectResult.error;
+        const project = projectResult.project;
+        const resolvedProjectId = project.projectId;
+
+        const storedRows = await neo4jService.run(FIND_NOTE_ANCHORS_QUERY, { projectId: resolvedProjectId, noteId });
+        if (storedRows.length === 0) {
+          return createErrorResponse(`SessionNote not found: id=${noteId}, projectId=${resolvedProjectId}`);
+        }
+        const anchorsProvided = aboutNodeIds != null || aboutPaths != null;
+        const anchors = await new SessionAnchorService(new ProjectService(neo4jService), neo4jService).resolveAnchors(
+          project,
+          {
+            nodeIds: aboutNodeIds ?? storedRows[0].aboutNodeIds,
+            paths: aboutPaths ?? storedRows[0].aboutPaths,
+          },
+        );
+
         const updateRows = await neo4jService.run(UPDATE_NOTE_QUERY, {
           projectId: resolvedProjectId,
           noteId,
@@ -156,59 +157,41 @@ export const createSessionUpdateTool = (server: McpServer): void => {
           content: content ?? null,
           category: category ?? null,
           severity: severity ?? null,
-          aboutNodeIds: aboutNodeIds ?? null,
+          aboutNodeIds: anchors.nodeIds,
+          aboutPaths: anchors.paths,
+          aboutPathHashes: anchors.pathHashes,
           supersededBy,
           supersededByProvided,
         });
-
-        if (updateRows.length === 0) {
-          return createErrorResponse(`SessionNote not found: id=${noteId}, projectId=${resolvedProjectId}`);
-        }
-
         const updated = updateRows[0];
-        const aboutNodeIdsChanged = !!updated.aboutNodeIdsChanged;
-        const updatedAboutNodeIds: string[] = Array.isArray(updated.aboutNodeIds) ? updated.aboutNodeIds : [];
 
-        // If aboutNodeIds changed, drop existing :ABOUT edges and recreate.
         let aboutEdgesDropped = 0;
         let aboutEdgesCreated = 0;
-        if (aboutNodeIdsChanged) {
+        if (anchorsProvided) {
           const dropResult = await neo4jService.run(DROP_ABOUT_EDGES_QUERY, {
             projectId: resolvedProjectId,
             noteId,
           });
           aboutEdgesDropped = toNumber(dropResult[0]?.dropped);
 
-          if (updatedAboutNodeIds.length > 0) {
-            const createResult = await neo4jService.run(RECREATE_NOTE_ABOUT_EDGES_QUERY, {
-              projectId: resolvedProjectId,
-              noteId,
-              aboutNodeIds: updatedAboutNodeIds,
-            });
-            aboutEdgesCreated = toNumber(createResult[0]?.created);
-          }
+          const createResult = await neo4jService.run(RECREATE_NOTE_ABOUT_EDGES_QUERY, {
+            projectId: resolvedProjectId,
+            noteId,
+            nodeRefs: anchors.nodeRefs,
+            sourceFileRefs: anchors.sourceFileRefs,
+          });
+          aboutEdgesCreated = toNumber(createResult[0]?.created);
         }
 
-        // If content or topic changed, re-embed. Best-effort, non-fatal.
-        let reEmbedded = false;
-        if (content != null || topic != null) {
-          try {
-            await neo4jService.run(QUERIES.CREATE_SESSION_NOTES_VECTOR_INDEX(getEmbeddingDimensions()));
-            const embeddingsService = new EmbeddingsService();
-            const embeddingText = `${updated.topic}\n\n${updated.content}`;
-            const embedding = await embeddingsService.embedText(embeddingText);
-            await neo4jService.run(SET_NOTE_EMBEDDING_QUERY, {
-              noteId,
-              projectId: resolvedProjectId,
-              embedding,
-              embeddingProvider: embeddingsService.provider,
-              embeddingModel: embeddingsService.model,
-            });
-            reEmbedded = true;
-          } catch (embErr) {
-            await debugLog('session_update: re-embed failed (non-fatal)', { error: String(embErr), noteId });
-          }
-        }
+        const reEmbedded =
+          content != null || topic != null
+            ? await new SessionEmbeddingService(neo4jService, new EmbeddingsService()).reembedNote({
+                noteId,
+                projectId: resolvedProjectId,
+                topic: updated.topic,
+                content: updated.content,
+              })
+            : false;
 
         if (content != null) {
           try {
@@ -229,10 +212,13 @@ export const createSessionUpdateTool = (server: McpServer): void => {
                 content: content != null,
                 category: category != null,
                 severity: severity != null,
-                aboutNodeIds: aboutNodeIdsChanged,
+                aboutNodeIds: aboutNodeIds != null,
+                aboutPaths: aboutPaths != null,
                 supersededBy: supersededByProvided,
               },
-              aboutEdges: aboutNodeIdsChanged ? { dropped: aboutEdgesDropped, created: aboutEdgesCreated } : null,
+              aboutEdges: anchorsProvided ? { dropped: aboutEdgesDropped, created: aboutEdgesCreated } : null,
+              unresolvedAboutNodeIds: anchors.unresolvedNodeIds,
+              missingAboutPaths: anchors.missingPaths,
               reEmbedded,
               lastValidated: toNumber(updated.lastValidated),
               note: {
@@ -247,6 +233,7 @@ export const createSessionUpdateTool = (server: McpServer): void => {
           ),
         );
       } catch (error) {
+        if (error instanceof InvalidProjectInputError) return createErrorResponse(error);
         await debugLog('session_update error', { error: String(error), noteId });
         return createErrorResponse(error instanceof Error ? error : String(error));
       } finally {
@@ -254,13 +241,4 @@ export const createSessionUpdateTool = (server: McpServer): void => {
       }
     },
   );
-};
-
-const toNumber = (v: unknown): number => {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object' && v && 'toNumber' in (v as object)) {
-    return (v as { toNumber: () => number }).toNumber();
-  }
-  return Number(v) || 0;
 };

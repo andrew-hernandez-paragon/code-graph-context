@@ -11,10 +11,7 @@ import { cursordiffWatchManager } from '../services/cursordiff-watch-manager.js'
 import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
 const inputSchema = z.object({
-  watchId: z
-    .string()
-    .optional()
-    .describe('Watch ID returned by ingest_cursordiff_session (mode: watch)'),
+  watchId: z.string().optional().describe('Watch ID returned by ingest_cursordiff_session (mode: watch)'),
   dataDir: z.string().optional().describe('Data directory of the watcher to stop (alternative to watchId)'),
 });
 
@@ -24,6 +21,7 @@ export const createStopIngestCursordiffSessionTool = (server: McpServer): void =
     {
       title: TOOL_METADATA[TOOL_NAMES.stopIngestCursordiffSession].title,
       description: TOOL_METADATA[TOOL_NAMES.stopIngestCursordiffSession].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.stopIngestCursordiffSession].annotations,
       inputSchema: inputSchema.shape,
     },
     async (args: z.infer<typeof inputSchema>) => {

@@ -7,7 +7,7 @@
  *   - One-shot CLI invocation, no fs-watch / live mode (deferred to v2).
  *   - Reads router.jsonl + lineage.jsonl + decisions.jsonl from
  *     --data-dir (default: ~/.local/share/nvim/cursordiff/).
- *   - Path-to-projectId via generateProjectId(); tags `synthetic: true`
+ *   - Path-to-projectId via the registered project at that path (ProjectService); tags `outsideParsedRoots: true`
  *     when the path isn't in a parsed project.
  *   - Idempotent: every write is a MERGE, so re-running over the same
  *     JSONL is a no-op.
@@ -27,6 +27,7 @@ import { existsSync, statSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve as resolvePath } from 'path';
 
+import { ProjectService } from '../core/projects/index.js';
 import { planIngest } from '../ingestors/cursordiff/index.js';
 import { Neo4jService } from '../storage/neo4j/neo4j.service.js';
 
@@ -61,33 +62,34 @@ const main = async (): Promise<void> => {
     process.exit(2);
   }
 
-  const { emits, stats } = planIngest(opts);
-
-  if (opts.dryRun) {
-    console.log('# ingest-cursordiff DRY RUN');
-    console.log(`# data-dir: ${opts.dataDir}`);
-    console.log(`# parsed-roots: ${opts.parsedRoots.length ? opts.parsedRoots.join(', ') : '(none)'}`);
-    console.log(`# router rows:   ${stats.routerRows}`);
-    console.log(`# lineage rows:  ${stats.lineageRows}`);
-    console.log(`# decision rows: ${stats.decisionRows}`);
-    console.log(`# → ToolCalls:   ${stats.toolCalls}`);
-    console.log(`# → Hunks:       ${stats.hunks}`);
-    console.log(`# → Decisions:   ${stats.decisions}`);
-    console.log(`# → synthetic projectIds: ${stats.syntheticProjects}`);
-    console.log(`# emit count: ${emits.length} cypher statements`);
-    console.log('');
-    for (const e of emits) {
-      if (e.comment) console.log(`-- ${e.comment}`);
-      console.log(e.query);
-      console.log(`PARAMS = ${JSON.stringify(e.params)}`);
-      console.log('');
-    }
-    return;
-  }
-
-  // Live mode: execute MERGE statements against Neo4j.
   const neo4j = new Neo4jService();
   try {
+    const registeredProjectIds = await new ProjectService(neo4j).findProjectIdsByPath(opts.parsedRoots);
+    const { emits, stats } = planIngest({ ...opts, registeredProjectIds });
+
+    if (opts.dryRun) {
+      console.log('# ingest-cursordiff DRY RUN');
+      console.log(`# data-dir: ${opts.dataDir}`);
+      console.log(`# parsed-roots: ${opts.parsedRoots.length ? opts.parsedRoots.join(', ') : '(none)'}`);
+      console.log(`# router rows:   ${stats.routerRows}`);
+      console.log(`# lineage rows:  ${stats.lineageRows}`);
+      console.log(`# decision rows: ${stats.decisionRows}`);
+      console.log(`# → ToolCalls:   ${stats.toolCalls}`);
+      console.log(`# → Hunks:       ${stats.hunks}`);
+      console.log(`# → Decisions:   ${stats.decisions}`);
+      console.log(`# → ToolCalls outside parsed roots: ${stats.toolCallsOutsideParsedRoots}`);
+      console.log(`# emit count: ${emits.length} cypher statements`);
+      console.log('');
+      for (const e of emits) {
+        if (e.comment) console.log(`-- ${e.comment}`);
+        console.log(e.query);
+        console.log(`PARAMS = ${JSON.stringify(e.params)}`);
+        console.log('');
+      }
+      return;
+    }
+
+    // Live mode: execute MERGE statements against Neo4j.
     let executed = 0;
     for (const e of emits) {
       await neo4j.run(e.query, e.params as Record<string, unknown>);
@@ -96,7 +98,7 @@ const main = async (): Promise<void> => {
     console.log(`ingest-cursordiff: executed ${executed} statements`);
     console.log(
       `  ToolCalls=${stats.toolCalls} Hunks=${stats.hunks} Decisions=${stats.decisions}` +
-        ` (${stats.syntheticProjects} synthetic projects)`,
+        ` (${stats.toolCallsOutsideParsedRoots} ToolCalls outside parsed roots)`,
     );
   } finally {
     await neo4j.close();

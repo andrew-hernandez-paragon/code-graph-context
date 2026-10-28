@@ -6,14 +6,16 @@
  */
 
 import { execSync, spawn as spawnProcess } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { Command } from 'commander';
 
 import { getLocalEmbeddingModel } from '../core/embeddings/embedding-config.js';
+import { readPackageVersion } from '../core/utils/package-version.js';
 import { Neo4jConnection, getNeo4jConnection } from '../storage/neo4j/neo4j-connection.js';
+import { parseNeo4jVersion, supportsProjectFilteredSearch } from '../storage/neo4j/neo4j-version.js';
 
 import { ProcessCommandRunner } from './command-runner.js';
 import { runEmbeddingsStart } from './embeddings-start.js';
@@ -24,6 +26,7 @@ import { isApocAvailable, probeBolt, queryBolt, waitForApoc, waitForBolt } from 
 import {
   NEO4J_CONFIG,
   createContainer,
+  getContainerImage,
   getContainerPublishedPorts,
   getContainerStatus,
   getFullStatus,
@@ -593,6 +596,15 @@ const runDockerInit = async (resolved: ResolvedInitOptions): Promise<void> => {
   }
 
   if (status !== 'not-found' && force) {
+    const existingImage = getContainerImage();
+    const existingVersion = existingImage === null ? null : parseNeo4jVersion(existingImage.split(':')[1] ?? '');
+    if (existingVersion !== null && !supportsProjectFilteredSearch(existingVersion)) {
+      log(sym.err, `The existing container runs ${existingImage}; its store cannot be opened by ${NEO4J_CONFIG.image}`);
+      console.log(
+        `\n  A 5.x store must pass through Neo4j 5.26 before 2026.x. Run: ${c.dim}code-graph-context migrate-from-docker${c.reset}\n`,
+      );
+      process.exit(1);
+    }
     const s = spinner('Removing existing container...');
     stopContainer();
     removeContainer();
@@ -800,24 +812,13 @@ const startMcpServer = async (): Promise<void> => {
   await import(pathToFileURL(mcpPath).href);
 };
 
-/**
- * Get package version
- */
-const getVersion = (): string => {
-  try {
-    // Go up from dist/cli to root
-    const pkgPath = join(__dirname, '..', '..', 'package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    return pkg.version;
-  } catch {
-    return 'unknown';
-  }
-};
-
 // Build CLI
 const program = new Command();
 
-program.name('code-graph-context').description('MCP server for code graph analysis with Neo4j').version(getVersion());
+program
+  .name('code-graph-context')
+  .description('MCP server for code graph analysis with Neo4j')
+  .version(readPackageVersion());
 
 program
   .command('init')

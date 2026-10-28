@@ -13,6 +13,7 @@ import { join } from 'path';
 import * as parcelWatcher from '@parcel/watcher';
 import type { AsyncSubscription } from '@parcel/watcher';
 
+import { ProjectService } from '../../core/projects/index.js';
 import { planIngest } from '../../ingestors/cursordiff/index.js';
 import { DecisionRow, LineageRow, RouterRow } from '../../ingestors/cursordiff/read-jsonl.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
@@ -308,37 +309,39 @@ class CursordiffWatchManager {
       const newRows = routerRows.length + lineageRows.length + decisionRows.length;
       if (newRows === 0) return;
 
-      // Re-run planIngest over full files so cross-references resolve correctly.
-      // planIngest is cheap (in-memory) and always idempotent (all writes are MERGEs).
-      const { emits, stats } = planIngest({
-        dataDir: rec.dataDir,
-        parsedRoots: rec.parsedRoots,
-      });
-
-      if (rec.dryRun) {
-        rec.rowsProcessed += newRows;
-        rec.lastActivityAt = new Date();
-        await debugLog('cursordiff ingest (dry-run)', { watchId: rec.watchId, newRows, emits: emits.length });
-        return;
-      }
-
       const neo4j = new Neo4jService();
       try {
+        const registeredProjectIds = await new ProjectService(neo4j).findProjectIdsByPath(rec.parsedRoots);
+        // Re-run planIngest over full files so cross-references resolve correctly.
+        // planIngest is cheap (in-memory) and always idempotent (all writes are MERGEs).
+        const { emits, stats } = planIngest({
+          dataDir: rec.dataDir,
+          parsedRoots: rec.parsedRoots,
+          registeredProjectIds,
+        });
+
+        if (rec.dryRun) {
+          rec.rowsProcessed += newRows;
+          rec.lastActivityAt = new Date();
+          await debugLog('cursordiff ingest (dry-run)', { watchId: rec.watchId, newRows, emits: emits.length });
+          return;
+        }
+
         for (const e of emits) {
           await neo4j.run(e.query, e.params as Record<string, unknown>);
         }
+
+        rec.rowsProcessed += newRows;
+        rec.lastActivityAt = new Date();
+        await debugLog('cursordiff ingest complete', {
+          watchId: rec.watchId,
+          newRows,
+          emits: emits.length,
+          stats,
+        });
       } finally {
         await neo4j.close();
       }
-
-      rec.rowsProcessed += newRows;
-      rec.lastActivityAt = new Date();
-      await debugLog('cursordiff ingest complete', {
-        watchId: rec.watchId,
-        newRows,
-        emits: emits.length,
-        stats,
-      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       rec.lastError = msg;

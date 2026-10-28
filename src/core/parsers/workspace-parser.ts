@@ -13,7 +13,6 @@ import { NESTJS_FRAMEWORK_SCHEMA } from '../config/nestjs-framework-schema.js';
 import { Neo4jNode, Neo4jEdge, ParsingContext, FrameworkSchema, EdgeEnhancement } from '../config/schema.js';
 import { debugLog } from '../utils/file-utils.js';
 import { createFrameworkEdgeData } from '../utils/graph-factory.js';
-import { resolveProjectId } from '../utils/project-id.js';
 import { WorkspaceConfig, WorkspacePackage } from '../workspace/index.js';
 
 import { ParserFactory, ProjectType } from './parser-factory.js';
@@ -76,12 +75,12 @@ export class WorkspaceParser {
 
   constructor(
     config: WorkspaceConfig,
-    projectId?: string,
+    projectId: string,
     lazyLoad: boolean = true,
     projectType: ProjectType | 'auto' = 'auto',
   ) {
     this.config = config;
-    this.projectId = resolveProjectId(config.rootPath, projectId);
+    this.projectId = projectId;
     this.lazyLoad = lazyLoad;
     this.projectType = projectType;
   }

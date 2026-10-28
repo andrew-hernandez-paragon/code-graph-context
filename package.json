@@ -54,7 +54,6 @@
     "test": "vitest run",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
-    "backfill:projects": "ts-node --esm scripts/backfill-project-nodes.ts",
     "reembed:sessions": "ts-node --esm scripts/reembed-sessions.ts",
     "ingest:cursordiff": "ts-node --esm src/cli/ingest-cursordiff.ts"
   },

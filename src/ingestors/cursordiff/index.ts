@@ -10,7 +10,7 @@
 
 import { resolve as resolvePath } from 'path';
 
-import { generateProjectId } from '../../core/utils/project-id.js';
+import { generateProjectId } from '../../core/projects/index.js';
 
 import { mergeDecision } from './merge-decision.js';
 import { mergeHunk, mergeProduced } from './merge-hunk.js';
@@ -23,15 +23,17 @@ export { readCursordiffJsonls } from './read-jsonl.js';
 
 /**
  * Walk up from `cwd` looking for an enclosing parsed project root. Returns
- * the longest root that is a prefix of cwd, or generates a synthetic
- * projectId when no match is found.
+ * the longest root that is a prefix of cwd, with the id that root is registered
+ * under (a hash of the root only when it is not registered), or a path-hash id
+ * flagged `outsideParsedRoots` when no root matches.
  */
 const projectIdFor = (
   cwd: string | undefined,
   parsedRoots: string[],
-): { projectId: string; synthetic: boolean; matchedRoot?: string } => {
+  registeredProjectIds: ReadonlyMap<string, string>,
+): { projectId: string; outsideParsedRoots: boolean; matchedRoot?: string } => {
   if (!cwd) {
-    return { projectId: generateProjectId('/'), synthetic: true };
+    return { projectId: generateProjectId('/'), outsideParsedRoots: true };
   }
   const abs = resolvePath(cwd);
   let bestRoot: string | undefined;
@@ -41,14 +43,20 @@ const projectIdFor = (
     }
   }
   if (bestRoot) {
-    return { projectId: generateProjectId(bestRoot), synthetic: false, matchedRoot: bestRoot };
+    return {
+      projectId: registeredProjectIds.get(resolvePath(bestRoot)) ?? generateProjectId(bestRoot),
+      outsideParsedRoots: false,
+      matchedRoot: bestRoot,
+    };
   }
-  return { projectId: generateProjectId(abs), synthetic: true };
+  return { projectId: generateProjectId(abs), outsideParsedRoots: true };
 };
 
 export interface IngestOptions {
   dataDir: string;
   parsedRoots: string[];
+  /** Registered project id for each parsed root, from ProjectService.findProjectIdsByPath. */
+  registeredProjectIds: ReadonlyMap<string, string>;
 }
 
 export interface IngestStats {
@@ -58,7 +66,8 @@ export interface IngestStats {
   toolCalls: number;
   hunks: number;
   decisions: number;
-  syntheticProjects: number;
+  /** ToolCalls whose working directory is inside no parsed root. */
+  toolCallsOutsideParsedRoots: number;
 }
 
 export interface IngestPlan {
@@ -85,19 +94,18 @@ export const planIngest = (opts: IngestOptions): IngestPlan => {
   const seenToolCalls = new Set<string>();
   const seenHunks = new Set<string>();
   const seenTouched = new Set<string>();
-  let syntheticCount = 0;
+  let outsideParsedRootsCount = 0;
 
   for (const row of lineage) {
     const routerRow = routerBySession.get(row.session_id);
-    const { projectId, synthetic } = projectIdFor(routerRow?.cwd, opts.parsedRoots);
-    if (synthetic) syntheticCount++;
-
+    const { projectId, outsideParsedRoots } = projectIdFor(routerRow?.cwd, opts.parsedRoots, opts.registeredProjectIds);
     if (!seenToolCalls.has(row.tool_call_id)) {
       emits.push({
-        ...mergeToolCall(row, projectId, synthetic, routerBySession),
-        comment: `ToolCall ${row.tool_call_id} (source=cursordiff${synthetic ? ', synthetic' : ''})`,
+        ...mergeToolCall(row, projectId, outsideParsedRoots, routerBySession),
+        comment: `ToolCall ${row.tool_call_id} (source=cursordiff${outsideParsedRoots ? ', outside parsed roots' : ''})`,
       });
       seenToolCalls.add(row.tool_call_id);
+      if (outsideParsedRoots) outsideParsedRootsCount++;
     }
 
     if (!seenHunks.has(row.hunk_id)) {
@@ -115,7 +123,7 @@ export const planIngest = (opts: IngestOptions): IngestPlan => {
 
     // One TOUCHED edge per unique (ToolCall, SourceFile) pair. The Cypher is a
     // no-op when the SourceFile node doesn't exist (file outside a parsed
-    // project), so synthetic projects are handled transparently.
+    // project), so a ToolCall outside every parsed root is handled transparently.
     const touchedKey = `${row.tool_call_id}|${row.path}`;
     if (!seenTouched.has(touchedKey)) {
       emits.push({
@@ -131,7 +139,7 @@ export const planIngest = (opts: IngestOptions): IngestPlan => {
   for (const row of decisions) {
     const lin = lineage.find((l) => l.hunk_id === row.hunk_id);
     const routerRow = lin ? routerBySession.get(lin.session_id) : undefined;
-    const { projectId } = projectIdFor(routerRow?.cwd, opts.parsedRoots);
+    const { projectId } = projectIdFor(routerRow?.cwd, opts.parsedRoots, opts.registeredProjectIds);
     emits.push({
       ...mergeDecision(row, projectId),
       comment: `Decision ${row.outcome} (byUser=${row.byUser}) on ${row.hunk_id}`,
@@ -147,7 +155,7 @@ export const planIngest = (opts: IngestOptions): IngestPlan => {
       toolCalls: seenToolCalls.size,
       hunks: seenHunks.size,
       decisions: decisions.length,
-      syntheticProjects: syntheticCount,
+      toolCallsOutsideParsedRoots: outsideParsedRootsCount,
     },
   };
 };

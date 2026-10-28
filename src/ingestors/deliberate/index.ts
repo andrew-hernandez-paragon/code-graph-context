@@ -8,12 +8,10 @@
  * See proposal 0004-consensus-protocol-deliberation for schema + rationale.
  */
 
-import { isSyntheticProjectId } from '../../core/utils/project-id.js';
-
 import { mergeAbout, mergeDeliberation, mergeScopedTo } from './merge-deliberation.js';
 import { mergeCites, mergeHasPosition, mergePosition } from './merge-position.js';
 import { mergeResultedIn, mergeVerdict } from './merge-verdict.js';
-import { DeliberateEventRow, DeliberationRow, PositionRow, VerdictRow, readDeliberateJsonls } from './read-jsonl.js';
+import { DeliberationRow, PositionRow, VerdictRow, readDeliberateJsonls } from './read-jsonl.js';
 
 export type { CypherEmit } from '../cursordiff/merge-toolcall.js';
 export type { DeliberateEventRow, DeliberationRow, PositionRow, VerdictRow } from './read-jsonl.js';
@@ -30,7 +28,6 @@ export interface DeliberateIngestStats {
   verdicts: number;
   scopedToEdges: number;
   aboutEdges: number;
-  syntheticProjects: number;
 }
 
 export interface DeliberateIngestPlan {
@@ -55,7 +52,6 @@ export const planIngestDeliberate = (opts: DeliberateIngestOptions): DeliberateI
   const seenScopedTo = new Set<string>();
   const seenAbout = new Set<string>();
   const allProjectIds = new Set<string>();
-  let syntheticCount = 0;
 
   // Separate event types for processing
   const deliberationRows: DeliberationRow[] = [];
@@ -63,7 +59,11 @@ export const planIngestDeliberate = (opts: DeliberateIngestOptions): DeliberateI
   const verdictRows: VerdictRow[] = [];
 
   for (const event of events) {
-    if (event.type === 'deliberation-start' || event.type === 'deliberation-complete' || event.type === 'deliberation-aborted') {
+    if (
+      event.type === 'deliberation-start' ||
+      event.type === 'deliberation-complete' ||
+      event.type === 'deliberation-aborted'
+    ) {
       deliberationRows.push(event as DeliberationRow);
     } else if (event.type === 'position-start' || event.type === 'position-complete') {
       positionRows.push(event as PositionRow);
@@ -91,7 +91,6 @@ export const planIngestDeliberate = (opts: DeliberateIngestOptions): DeliberateI
           });
           seenScopedTo.add(key);
           allProjectIds.add(projectId);
-          if (isSyntheticProjectId(projectId)) syntheticCount++;
         }
       }
 
@@ -151,7 +150,6 @@ export const planIngestDeliberate = (opts: DeliberateIngestOptions): DeliberateI
       verdicts: seenVerdicts.size,
       scopedToEdges: seenScopedTo.size,
       aboutEdges: seenAbout.size,
-      syntheticProjects: syntheticCount,
     },
   };
 };

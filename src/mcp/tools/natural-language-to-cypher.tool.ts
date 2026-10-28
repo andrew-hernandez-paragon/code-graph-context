@@ -10,14 +10,14 @@ import { z } from 'zod';
 
 import { NaturalLanguageToCypherService } from '../../core/embeddings/natural-language-to-cypher.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA, FILE_PATHS } from '../constants.js';
+import { TOOL_NAMES, TOOL_METADATA, FILE_PATHS, PROJECT_ID_DESCRIPTION } from '../constants.js';
 import {
   createEmptyResponse,
   createErrorResponse,
   createSuccessResponse,
   formatQueryResults,
   debugLog,
-  resolveProjectIdOrError,
+  findCodebaseOrError,
 } from '../utils.js';
 
 // Service instance - initialized asynchronously
@@ -48,8 +48,9 @@ export const createNaturalLanguageToCypherTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.naturalLanguageToCypher].title,
       description: TOOL_METADATA[TOOL_NAMES.naturalLanguageToCypher].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.naturalLanguageToCypher].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path (e.g., "backend" or "proj_a1b2c3d4e5f6")'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.codebase),
         query: z.string().describe('Natural language query to convert to Cypher'),
       },
     },
@@ -57,9 +58,9 @@ export const createNaturalLanguageToCypherTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID from name, path, or ID
-        const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+        const projectResult = await findCodebaseOrError(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
-        const resolvedProjectId = projectResult.projectId;
+        const resolvedProjectId = projectResult.project.projectId;
 
         if (!naturalLanguageToCypherService) {
           await debugLog('Natural language service not available', { projectId: resolvedProjectId, query });
@@ -75,7 +76,7 @@ export const createNaturalLanguageToCypherTool = (server: McpServer): void => {
         const parameters = { ...cypherResult.parameters, projectId: resolvedProjectId };
 
         try {
-          await neo4jService.run(`EXPLAIN ${cypherResult.cypher}`, parameters);
+          await neo4jService.runReadOnly(`EXPLAIN ${cypherResult.cypher}`, parameters);
         } catch (validationError) {
           const message = validationError instanceof Error ? validationError.message : String(validationError);
           await debugLog('Generated Cypher validation failed', {
@@ -91,7 +92,7 @@ export const createNaturalLanguageToCypherTool = (server: McpServer): void => {
         }
 
         // Execute the validated query
-        const results = await neo4jService.run(cypherResult.cypher, parameters);
+        const results = await neo4jService.runReadOnly(cypherResult.cypher, parameters);
 
         const formattedResponse = formatQueryResults(results, query, cypherResult);
         return createSuccessResponse(JSON.stringify(formattedResponse, null, 2));

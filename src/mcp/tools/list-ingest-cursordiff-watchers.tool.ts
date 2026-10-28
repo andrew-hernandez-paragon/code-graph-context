@@ -15,6 +15,7 @@ export const createListIngestCursordiffWatchersTool = (server: McpServer): void 
     {
       title: TOOL_METADATA[TOOL_NAMES.listIngestCursordiffWatchers].title,
       description: TOOL_METADATA[TOOL_NAMES.listIngestCursordiffWatchers].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.listIngestCursordiffWatchers].annotations,
       inputSchema: {},
     },
     async () => {

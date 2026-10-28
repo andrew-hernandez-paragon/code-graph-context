@@ -147,9 +147,12 @@ export const MESSAGE_CATEGORIES = {
   alert: 'Urgent notification (e.g., breaking change, test failure)',
   handoff: 'Context handoff between agents (e.g., partial work)',
   answer: 'Answer to a question-type task (taskId required, links message to the asker)',
-  position: 'Consensus primitive: this agent\'s current stance on a topic. Content is freeform or structured JSON per the consuming protocol. A subsequent `position` from the same agentId in the same swarm supersedes the prior stance by timestamp.',
-  agree: 'Consensus primitive: this agent endorses a specific stance, proposal, or emerging consensus. Content names what is being agreed to (a stance summary, a proposal id, a label). N matching agree messages from N distinct agents = convergence — the consuming protocol decides the threshold (e.g. 3-of-3 for unanimous, 2-of-3 for majority).',
-  dissent: 'Consensus primitive: this agent does NOT converge with the emerging consensus and holds its position. Content is the rationale. The consuming protocol decides escalation semantics — terminal dissent (the agent\'s last message before exiting the protocol loop) and mid-dialogue dissent (in-protocol disagreement that may resolve to `agree` on a later iteration) may carry different weight. See e.g. /deliberate, where only terminal dissent drives a `split-with-dissent` consensus outcome.',
+  position:
+    "Consensus primitive: this agent's current stance on a topic. Content is freeform or structured JSON per the consuming protocol. A subsequent `position` from the same agentId in the same swarm supersedes the prior stance by timestamp.",
+  agree:
+    'Consensus primitive: this agent endorses a specific stance, proposal, or emerging consensus. Content names what is being agreed to (a stance summary, a proposal id, a label). N matching agree messages from N distinct agents = convergence; the consuming protocol decides the threshold (e.g. 3-of-3 for unanimous, 2-of-3 for majority).',
+  dissent:
+    "Consensus primitive: this agent does NOT converge with the emerging consensus and holds its position. Content is the rationale. The consuming protocol decides escalation semantics; terminal dissent (the agent's last message before exiting the protocol loop) and mid-dialogue dissent (in-protocol disagreement that may resolve to `agree` on a later iteration) may carry different weight. See e.g. /deliberate, where only terminal dissent drives a `split-with-dissent` consensus outcome.",
 } as const;
 
 export type MessageCategory = keyof typeof MESSAGE_CATEGORIES;

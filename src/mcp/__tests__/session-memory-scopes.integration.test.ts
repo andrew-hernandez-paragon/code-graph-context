@@ -1,0 +1,150 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
+import {
+  FILTER_SEARCH_NOTES_QUERY,
+  FIND_BOOKMARK_QUERY,
+  VECTOR_SEARCH_BOOKMARKS_QUERY,
+  buildNoteSearchQuery,
+  searchSessionNotes,
+} from '../tools/session-recall.tool.js';
+import { CREATE_BOOKMARK_QUERY, CREATE_SESSION_NOTE_QUERY } from '../tools/session-save.tool.js';
+import { RECREATE_NOTE_ABOUT_EDGES_QUERY } from '../tools/session-update.tool.js';
+
+// Opt in against a local Neo4j whose vector indexes carry the projectId filter.
+// Every statement runs in a READ transaction: queries that write are only planned with EXPLAIN.
+describe.skipIf(process.env.CGC_NEO4J_TESTS !== '1')('session memory queries in Neo4j', () => {
+  let db: Neo4jService;
+  let read: Pick<Neo4jService, 'run'>;
+  let noteProjects: string[];
+  let noteEmbedding: number[];
+  let bookmarkProject: string;
+  let bookmarkEmbedding: number[];
+
+  beforeAll(async () => {
+    db = new Neo4jService();
+    read = {
+      run: async (query, params = {}) => {
+        const session = db.getDriver().session({ defaultAccessMode: 'READ' });
+        try {
+          const result = await session.executeRead((tx) => tx.run(query, params), { timeout: 30000 });
+          return result.records.map((record) => record.toObject());
+        } finally {
+          await session.close();
+        }
+      },
+    };
+    const projects = await read.run(
+      `MATCH (n:SessionNote) WHERE n.embedding IS NOT NULL
+       WITH n.projectId AS projectId, count(*) AS notes ORDER BY notes ASC
+       RETURN projectId LIMIT 2`,
+    );
+    noteProjects = projects.map((row) => row.projectId);
+    [{ embedding: noteEmbedding }] = await read.run(
+      `MATCH (n:SessionNote {projectId: $projectId}) WHERE n.embedding IS NOT NULL RETURN n.embedding AS embedding LIMIT 1`,
+      { projectId: noteProjects[0] },
+    );
+    [{ projectId: bookmarkProject, embedding: bookmarkEmbedding }] = await read.run(
+      `MATCH (b:SessionBookmark) WHERE b.embedding IS NOT NULL
+       RETURN b.projectId AS projectId, b.embedding AS embedding LIMIT 1`,
+    );
+  });
+
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  const searchParams = (projectIds: string[]) => ({
+    projectIds,
+    queryEmbedding: noteEmbedding,
+    limit: 50,
+    minSimilarity: 0,
+    category: null,
+    severity: null,
+    sessionId: null,
+    agentId: null,
+    includeSuperseded: true,
+  });
+
+  it('semantic note search returns notes from the requested projects only', async () => {
+    const oneProject = await searchSessionNotes(read, searchParams([noteProjects[0]]));
+    expect(oneProject.length).toBeGreaterThan(0);
+    expect(new Set(oneProject.map((row) => row.projectId))).toEqual(new Set([noteProjects[0]]));
+
+    const both = await searchSessionNotes(read, searchParams(noteProjects));
+    expect(new Set(both.map((row) => row.projectId))).toEqual(new Set(noteProjects));
+    expect(both[0].relevance).toBeGreaterThan(0.99);
+  });
+
+  it('semantic note search without the chunk index also stays within the requested projects', async () => {
+    const rows = await read.run(buildNoteSearchQuery(false), searchParams([noteProjects[1]]));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((row) => row.projectId))).toEqual(new Set([noteProjects[1]]));
+  });
+
+  it('a missing chunk index fails with a message the fallback recognizes', async () => {
+    const query = buildNoteSearchQuery().replaceAll('session_note_chunks_idx', 'session_note_chunks_idx_absent');
+    const failure = await read.run(query, searchParams(noteProjects)).catch((error: Error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain('session_note_chunks_idx_absent');
+    expect((failure as Error).message).toMatch(/no such|not found|does not exist/i);
+  });
+
+  it('filter mode returns notes from the requested projects with their anchors', async () => {
+    const rows = await read.run(FILTER_SEARCH_NOTES_QUERY, { ...searchParams(noteProjects), limit: 100 });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((row) => row.projectId))).toEqual(new Set(noteProjects));
+    for (const row of rows) {
+      expect(row.aboutPaths).toEqual([]);
+      expect(row.aboutPathHashes).toEqual([]);
+    }
+  });
+
+  it('bookmark search by session and by meaning stays within the requested projects', async () => {
+    const [latest] = await read.run(FIND_BOOKMARK_QUERY, {
+      projectIds: [bookmarkProject],
+      sessionId: null,
+      agentId: null,
+    });
+    expect(latest.projectId).toBe(bookmarkProject);
+    expect(latest.workingSetPaths).toEqual([]);
+
+    const [match] = await read.run(VECTOR_SEARCH_BOOKMARKS_QUERY, {
+      projectIds: [bookmarkProject],
+      queryEmbedding: bookmarkEmbedding,
+      minSimilarity: 0,
+      agentId: null,
+    });
+    expect(match.projectId).toBe(bookmarkProject);
+    expect(match.relevance).toBeGreaterThan(0.99);
+
+    expect(
+      await read.run(VECTOR_SEARCH_BOOKMARKS_QUERY, {
+        projectIds: ['proj_no_such_project'],
+        queryEmbedding: bookmarkEmbedding,
+        minSimilarity: 0,
+        agentId: null,
+      }),
+    ).toEqual([]);
+  });
+
+  it('counts stale anchors by id prefix', async () => {
+    const [row] = await read.run(QUERIES.COUNT_STALE_ABOUT_REFS, {
+      projectId: noteProjects[0],
+      projectIdPrefix: `${noteProjects[0]}:`,
+    });
+    expect(typeof row.staleCount.toNumber()).toBe('number');
+  });
+
+  it.each([
+    ['session_save note', CREATE_SESSION_NOTE_QUERY],
+    ['session_save bookmark', CREATE_BOOKMARK_QUERY],
+    ['session_update edges', RECREATE_NOTE_ABOUT_EDGES_QUERY],
+    ['recreate ABOUT by id', QUERIES.RECREATE_ABOUT_EDGES],
+    ['recreate ABOUT by path', QUERIES.RECREATE_ABOUT_PATH_EDGES],
+    ['recreate REFERENCES by id', QUERIES.RECREATE_REFERENCES_EDGES],
+    ['recreate REFERENCES by path', QUERIES.RECREATE_REFERENCES_PATH_EDGES],
+  ])('plans the %s statement without writing', async (_name, query) => {
+    await expect(read.run(`EXPLAIN ${query}`, {})).resolves.toEqual([]);
+  });
+});

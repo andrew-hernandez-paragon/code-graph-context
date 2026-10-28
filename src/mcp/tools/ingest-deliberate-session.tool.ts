@@ -16,8 +16,8 @@ import { join, resolve as resolvePath } from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { ProjectService } from '../../core/projects/index.js';
 import { planIngestDeliberate } from '../../ingestors/deliberate/index.js';
-import { ensureProjectNode, isSyntheticProjectId } from '../../core/utils/project-id.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { deliberateWatchManager, DEFAULT_DELIBERATE_DATA_DIR } from '../services/deliberate-watch-manager.js';
@@ -39,7 +39,7 @@ const inputSchema = z.object({
     .boolean()
     .optional()
     .default(false)
-    .describe('watch mode only — skip existing rows and only process new writes'),
+    .describe('watch mode only; skip existing rows and only process new writes'),
 });
 
 const resolveDataDir = (raw?: string): string => {
@@ -53,6 +53,7 @@ export const createIngestDeliberateSessionTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.ingestDeliberateSession].title,
       description: TOOL_METADATA[TOOL_NAMES.ingestDeliberateSession].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.ingestDeliberateSession].annotations,
       inputSchema: inputSchema.shape,
     },
     async (args: z.infer<typeof inputSchema>) => {
@@ -75,46 +76,34 @@ export const createIngestDeliberateSessionTool = (server: McpServer): void => {
         if (args.mode === 'one-shot') {
           const { emits, projectIds, stats } = planIngestDeliberate({ dataDir });
 
-          if (dryRun) {
+          const neo4j = new Neo4jService();
+          try {
+            // SCOPED_TO edges to an unregistered project are silently skipped, so name the ids.
+            const unknownProjectIds = await new ProjectService(neo4j).findUnregisteredIds(projectIds);
             const summary = {
-              dryRun: true,
+              dryRun,
               eventRows: stats.eventRows,
               deliberations: stats.deliberations,
               positions: stats.positions,
               verdicts: stats.verdicts,
               scopedToEdges: stats.scopedToEdges,
               aboutEdges: stats.aboutEdges,
-              syntheticProjects: stats.syntheticProjects,
-              cypherStatements: emits.length,
+              unknownProjectIds,
+              ...(dryRun && { cypherStatements: emits.length }),
             };
-            return createSuccessResponse(JSON.stringify(summary, null, 2));
-          }
-
-          const neo4j = new Neo4jService();
-          try {
-            for (const projectId of projectIds) {
-              await ensureProjectNode(neo4j, projectId, { synthetic: isSyntheticProjectId(projectId) });
+            if (dryRun) {
+              return createSuccessResponse(JSON.stringify(summary, null, 2));
             }
+
             for (const e of emits) {
               await neo4j.run(e.query, e.params as Record<string, unknown>);
             }
+
+            await debugLog('one-shot deliberate ingest complete', summary);
+            return createSuccessResponse(JSON.stringify(summary, null, 2));
           } finally {
             await neo4j.close();
           }
-
-          const summary = {
-            dryRun: false,
-            eventRows: stats.eventRows,
-            deliberations: stats.deliberations,
-            positions: stats.positions,
-            verdicts: stats.verdicts,
-            scopedToEdges: stats.scopedToEdges,
-            aboutEdges: stats.aboutEdges,
-            syntheticProjects: stats.syntheticProjects,
-          };
-
-          await debugLog('one-shot deliberate ingest complete', summary);
-          return createSuccessResponse(JSON.stringify(summary, null, 2));
         }
 
         // ------------------------------------------------------------------ //

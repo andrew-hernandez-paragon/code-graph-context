@@ -35,7 +35,7 @@ export const mergeTouched = (toolCallId: string, filePath: string, projectId: st
 export const mergeToolCall = (
   row: LineageRow,
   projectId: string,
-  synthetic: boolean,
+  outsideParsedRoots: boolean,
   routerBySession: Map<string, RouterRow>,
 ): CypherEmit => {
   const router = routerBySession.get(row.session_id);
@@ -45,13 +45,14 @@ export const mergeToolCall = (
       SET t.source       = $source,
           t.sessionId    = $sessionId,
           t.projectId    = $projectId,
-          t.synthetic    = $synthetic,
+          t.outsideParsedRoots = $outsideParsedRoots,
           t.toolName     = $toolName,
           t.model        = coalesce($model, t.model),
           t.kind         = $kind,
           t.durationMs   = $durationMs,
           t.success      = $success,
           t.ts           = $ts
+      REMOVE t.synthetic
       RETURN t.id AS id
     `.trim(),
     params: {
@@ -59,7 +60,7 @@ export const mergeToolCall = (
       source: 'cursordiff',
       sessionId: row.session_id,
       projectId,
-      synthetic,
+      outsideParsedRoots,
       toolName: row.tool_name ?? null,
       model: row.model ?? router?.picked ?? null,
       kind: row.kind ?? null,

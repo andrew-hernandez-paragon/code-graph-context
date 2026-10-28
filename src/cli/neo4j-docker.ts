@@ -13,7 +13,7 @@ import { isApocAvailable, probeBolt, waitForBolt } from './neo4j-bolt.js';
 // Container configuration
 export const NEO4J_CONFIG = {
   containerName: 'code-graph-neo4j',
-  image: 'neo4j:5.23',
+  image: 'neo4j:2026.02.2-community',
   httpPort: 7474,
   boltPort: 7687,
   defaultPassword: 'PASSWORD',
@@ -84,6 +84,12 @@ export const getContainerStatus = (containerName: string = NEO4J_CONFIG.containe
   if (result === null) return 'not-found';
   return result === 'true' ? 'running' : 'stopped';
 };
+
+/**
+ * Image an existing container was created from, or null when it does not exist
+ */
+export const getContainerImage = (containerName: string = NEO4J_CONFIG.containerName): string | null =>
+  exec(`docker inspect --format={{.Config.Image}} ${containerName}`);
 
 /**
  * Start an existing stopped container

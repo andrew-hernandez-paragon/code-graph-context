@@ -18,10 +18,18 @@ vi.mock('../../../core/embeddings/embeddings.service.js', () => ({
   },
   getEmbeddingDimensions: () => 768,
 }));
+vi.mock('../../../core/utils/file-utils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../core/utils/file-utils.js')>()),
+  debugLog: vi.fn(),
+}));
 vi.mock('../../handlers/session-note-chunks.js', () => ({ saveSessionNoteChunks: vi.fn().mockResolvedValue(0) }));
 vi.mock('../../utils.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils.js')>()),
-  resolveProjectIdOrError: vi.fn(async (projectId: string) => ({ success: true, projectId })),
+  findOrRegisterProjectOrError: vi.fn(async (projectId: string) => ({ success: true, project: { projectId } })),
+  findProjectsOrError: vi.fn(async (inputs: string[]) => ({
+    success: true,
+    projects: inputs.map((projectId) => ({ projectId, name: projectId, kind: 'codebase' })),
+  })),
   debugLog: vi.fn(),
 }));
 
@@ -30,6 +38,8 @@ interface StoredNote {
   projectId: string;
   topic: string;
   supersededBy: string | null;
+  aboutPaths: string[];
+  aboutPathHashes: string[];
 }
 
 interface QueryParams {
@@ -39,6 +49,7 @@ interface QueryParams {
   supersededBy: string | null;
   supersedes: string[];
   includeSuperseded: boolean;
+  projectIds: string[];
 }
 
 // Stands in for Neo4j: models only the stored supersededBy property that the create and recall queries read and write.
@@ -51,6 +62,8 @@ const fakeRun = async (query: string, params: QueryParams) => {
       projectId: params.projectId,
       topic: params.topic,
       supersededBy: params.supersededBy,
+      aboutPaths: [],
+      aboutPathHashes: [],
     });
     const markedIds = params.supersedes.filter((id) => notes.get(id)?.projectId === params.projectId);
     for (const id of markedIds) notes.get(id)!.supersededBy = params.noteId;
@@ -59,7 +72,7 @@ const fakeRun = async (query: string, params: QueryParams) => {
   }
   if (query.includes('$includeSuperseded')) {
     return [...notes.values()].filter(
-      (note) => note.projectId === params.projectId && (params.includeSuperseded || note.supersededBy === null),
+      (note) => params.projectIds.includes(note.projectId) && (params.includeSuperseded || note.supersededBy === null),
     );
   }
   return [];
@@ -81,11 +94,23 @@ const saveNote = async (topic: string, args: Record<string, unknown> = {}) =>
       topic,
       content: `${topic}, the full observation`,
       category: 'insight',
+      type: 'auto',
+      severity: 'info',
       ...args,
     }),
   );
 const recallTopics = async (args: Record<string, unknown> = {}) => {
-  const recalled = resultJson(await handlerOf(createSessionRecallTool)({ projectId: 'proj_test', ...args }));
+  const recalled = resultJson(
+    await handlerOf(createSessionRecallTool)({
+      projectId: 'proj_test',
+      includeCode: true,
+      snippetLength: 500,
+      limit: 5,
+      minSimilarity: 0.3,
+      includeSuperseded: false,
+      ...args,
+    }),
+  );
   return recalled.notes.map((note: { topic: string }) => note.topic);
 };
 
@@ -108,7 +133,14 @@ describe('session_save supersedes', () => {
   });
 
   it('reports ids it did not find, including notes from another project, and passes each id once', async () => {
-    notes.set('note_other', { id: 'note_other', projectId: 'proj_other', topic: 'other', supersededBy: null });
+    notes.set('note_other', {
+      id: 'note_other',
+      projectId: 'proj_other',
+      topic: 'other',
+      supersededBy: null,
+      aboutPaths: [],
+      aboutPathHashes: [],
+    });
     const old = await saveNote('retry cap is five');
 
     const replacement = await saveNote('retry cap is eight', {
@@ -138,6 +170,8 @@ describe('session_save supersedes', () => {
       projectId: 'proj_test',
       sessionId: 'session',
       agentId: 'agent',
+      type: 'auto',
+      severity: 'info',
       summary: 'Working on the retry cap',
       taskContext: 'retry cap',
       workingSetNodeIds: ['node'],

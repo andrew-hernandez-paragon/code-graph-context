@@ -7,8 +7,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { createErrorResponse, createSuccessResponse, findProjectOrError, debugLog } from '../utils.js';
 
 /**
  * Neo4j query to delete pheromones by swarm ID
@@ -111,8 +111,9 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmCleanup].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmCleanup].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmCleanup].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         swarmId: z.string().optional().describe('Delete all pheromones and tasks from this swarm'),
         agentId: z.string().optional().describe('Delete all pheromones from this agent'),
         all: z.boolean().optional().default(false).describe('Delete ALL pheromones in project'),
@@ -137,12 +138,12 @@ export const createSwarmCleanupTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
 
       // Resolve project ID
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         // Validate: must specify swarmId, agentId, or all

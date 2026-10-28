@@ -1,25 +1,15 @@
 /**
  * List Projects Tool
- * Lists all parsed projects in the database
+ * Lists every project (codebase, directory or collection) with its memory counts
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { LIST_PROJECTS_QUERY } from '../../core/utils/project-id.js';
+import { PROJECT_KINDS, ProjectService } from '../../core/projects/index.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { createEmptyResponse, createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
-
-interface ProjectInfo {
-  projectId: string;
-  name: string;
-  path: string;
-  status: string;
-  nodeCount: number | null;
-  edgeCount: number | null;
-  updatedAt: string;
-}
 
 export const createListProjectsTool = (server: McpServer): void => {
   server.registerTool(
@@ -27,62 +17,27 @@ export const createListProjectsTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.listProjects].title,
       description: TOOL_METADATA[TOOL_NAMES.listProjects].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.listProjects].annotations,
       inputSchema: {
-        includeSynthetic: z
-          .boolean()
+        kinds: z
+          .array(z.enum(PROJECT_KINDS))
           .optional()
-          .default(false)
-          .describe('Include synthetic (non-parsed) Project nodes in the list'),
+          .describe('Only list projects of these kinds (default: all kinds)'),
       },
     },
-    async ({ includeSynthetic = false }) => {
+    async ({ kinds }) => {
       const neo4jService = new Neo4jService();
       try {
-        const results = await neo4jService.run(LIST_PROJECTS_QUERY, { includeSynthetic });
+        const projects = await new ProjectService(neo4jService).list(kinds);
 
-        if (results.length === 0) {
+        if (projects.length === 0) {
           return createEmptyResponse(
-            'No projects found in the database',
-            'Use parse_typescript_project to add a project first.',
+            kinds ? `No projects of kind ${kinds.join(', ')} found` : 'No projects found in the database',
+            'Call create_project to add a directory or collection of memories, or parse_typescript_project to add a codebase.',
           );
         }
 
-        const projects: ProjectInfo[] = results.map((r) => ({
-          projectId: r.projectId as string,
-          name: r.name as string,
-          path: r.path as string,
-          status: (r.status as string) ?? 'unknown',
-          nodeCount: r.nodeCount as number | null,
-          edgeCount: r.edgeCount as number | null,
-          updatedAt: r.updatedAt?.toString() ?? 'Unknown',
-        }));
-
-        // Format output for readability
-        const header = `Found ${projects.length} project(s):\n\n`;
-        const formatStats = (p: ProjectInfo) => {
-          if (p.status === 'complete' && p.nodeCount !== null) {
-            return `  Stats: ${p.nodeCount} nodes, ${p.edgeCount ?? 0} edges`;
-          }
-          return '';
-        };
-        const projectList = projects
-          .map(
-            (p) =>
-              `- ${p.name} [${p.status}]\n` +
-              `  ID: ${p.projectId}\n` +
-              `  Path: ${p.path}\n` +
-              formatStats(p) +
-              (formatStats(p) ? '\n' : '') +
-              `  Updated: ${p.updatedAt}`,
-          )
-          .join('\n\n');
-
-        const tip =
-          '\n\nTip: Use the project name (e.g., "' +
-          projects[0].name +
-          '") in other tools instead of the full projectId.';
-
-        return createSuccessResponse(header + projectList + tip);
+        return createSuccessResponse(JSON.stringify({ projects }, null, 2));
       } catch (error) {
         console.error('List projects error:', error);
         await debugLog('List projects error', { error });

@@ -16,6 +16,7 @@ import { join, resolve as resolvePath } from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { ProjectService } from '../../core/projects/index.js';
 import { planIngest } from '../../ingestors/cursordiff/index.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
@@ -24,18 +25,11 @@ import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.j
 
 const inputSchema = z.object({
   mode: z.enum(['one-shot', 'watch']).describe('one-shot ingests current files; watch starts live tail'),
-  dataDir: z
-    .string()
-    .optional()
-    .describe(`Directory containing cursordiff JSONL files (default: ${DEFAULT_DATA_DIR})`),
+  dataDir: z.string().optional().describe(`Directory containing cursordiff JSONL files (default: ${DEFAULT_DATA_DIR})`),
   routerFile: z.string().optional().default('router.jsonl').describe('Router JSONL filename'),
   lineageFile: z.string().optional().default('lineage.jsonl').describe('Lineage JSONL filename'),
   decisionsFile: z.string().optional().default('decisions.jsonl').describe('Decisions JSONL filename'),
-  parsedRoots: z
-    .array(z.string())
-    .optional()
-    .default([])
-    .describe('Resolved project roots for projectId attribution'),
+  parsedRoots: z.array(z.string()).optional().default([]).describe('Resolved project roots for projectId attribution'),
   dryRun: z
     .boolean()
     .optional()
@@ -45,7 +39,7 @@ const inputSchema = z.object({
     .boolean()
     .optional()
     .default(false)
-    .describe('watch mode only — skip existing rows and only process new writes'),
+    .describe('watch mode only; skip existing rows and only process new writes'),
 });
 
 const resolveDataDir = (raw?: string): string => {
@@ -59,6 +53,7 @@ export const createIngestCursordiffSessionTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.ingestCursordiffSession].title,
       description: TOOL_METADATA[TOOL_NAMES.ingestCursordiffSession].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.ingestCursordiffSession].annotations,
       inputSchema: inputSchema.shape,
     },
     async (args: z.infer<typeof inputSchema>) => {
@@ -80,11 +75,12 @@ export const createIngestCursordiffSessionTool = (server: McpServer): void => {
         // ONE-SHOT mode
         // ------------------------------------------------------------------ //
         if (args.mode === 'one-shot') {
-          const { emits, stats } = planIngest({ dataDir, parsedRoots });
-
-          if (dryRun) {
+          const neo4j = new Neo4jService();
+          try {
+            const registeredProjectIds = await new ProjectService(neo4j).findProjectIdsByPath(parsedRoots);
+            const { emits, stats } = planIngest({ dataDir, parsedRoots, registeredProjectIds });
             const summary = {
-              dryRun: true,
+              dryRun,
               routerRows: stats.routerRows,
               lineageRows: stats.lineageRows,
               decisionRows: stats.decisionRows,
@@ -92,35 +88,22 @@ export const createIngestCursordiffSessionTool = (server: McpServer): void => {
               hunksMerged: stats.hunks,
               decisionsMerged: stats.decisions,
               touchedEdges: emits.filter((e) => e.comment?.startsWith('TOUCHED')).length,
-              syntheticProjects: stats.syntheticProjects,
-              cypherStatements: emits.length,
+              toolCallsOutsideParsedRoots: stats.toolCallsOutsideParsedRoots,
+              ...(dryRun && { cypherStatements: emits.length }),
             };
-            return createSuccessResponse(JSON.stringify(summary, null, 2));
-          }
+            if (dryRun) {
+              return createSuccessResponse(JSON.stringify(summary, null, 2));
+            }
 
-          const neo4j = new Neo4jService();
-          try {
             for (const e of emits) {
               await neo4j.run(e.query, e.params as Record<string, unknown>);
             }
+
+            await debugLog('one-shot ingest complete', summary);
+            return createSuccessResponse(JSON.stringify(summary, null, 2));
           } finally {
             await neo4j.close();
           }
-
-          const summary = {
-            dryRun: false,
-            routerRows: stats.routerRows,
-            lineageRows: stats.lineageRows,
-            decisionRows: stats.decisionRows,
-            toolCallsMerged: stats.toolCalls,
-            hunksMerged: stats.hunks,
-            decisionsMerged: stats.decisions,
-            touchedEdges: emits.filter((e) => e.comment?.startsWith('TOUCHED')).length,
-            syntheticProjects: stats.syntheticProjects,
-          };
-
-          await debugLog('one-shot ingest complete', summary);
-          return createSuccessResponse(JSON.stringify(summary, null, 2));
         }
 
         // ------------------------------------------------------------------ //

@@ -6,12 +6,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
 import { watchManager } from '../services/watch-manager.js';
 import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
 const inputSchema = z.object({
-  projectId: z.string().describe('Project ID to stop watching'),
+  projectId: z.string().describe(PROJECT_ID_DESCRIPTION.codebase),
 });
 
 export const createStopWatchProjectTool = (server: McpServer): void => {
@@ -20,6 +20,7 @@ export const createStopWatchProjectTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.stopWatchProject].title,
       description: TOOL_METADATA[TOOL_NAMES.stopWatchProject].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.stopWatchProject].annotations,
       inputSchema: inputSchema.shape,
     },
     async (args: z.infer<typeof inputSchema>) => {

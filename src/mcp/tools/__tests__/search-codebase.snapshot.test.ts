@@ -174,7 +174,7 @@ describe('searchCodeRaw — shape and ordering snapshot (0009)', () => {
     expect(rows).toMatchSnapshot('multi-project-rows');
   });
 
-  it('uses fetchMultiplier default of 10 when not provided', async () => {
+  it('searches each project inside the vector index instead of over-fetching', async () => {
     mockRun.mockResolvedValueOnce([]);
     await searchCodeRaw(makeMockNeo4j(), {
       projectIds: ['proj_test'],
@@ -183,22 +183,13 @@ describe('searchCodeRaw — shape and ordering snapshot (0009)', () => {
       minSimilarity: 0.5,
     });
 
-    const [, params] = mockRun.mock.calls[0];
-    expect(params.fetchMultiplier).toBe(10);
-  });
-
-  it('respects custom fetchMultiplier', async () => {
-    mockRun.mockResolvedValueOnce([]);
-    await searchCodeRaw(makeMockNeo4j(), {
-      projectIds: ['proj_test'],
-      embedding: [0.1],
-      limit: 3,
-      minSimilarity: 0.5,
-      fetchMultiplier: 5,
-    });
-
-    const [, params] = mockRun.mock.calls[0];
-    expect(params.fetchMultiplier).toBe(5);
+    const [query, params] = mockRun.mock.calls[0];
+    expect(query).toMatch(/^\s*CYPHER 25/);
+    expect(query).toContain('SEARCH node IN');
+    expect(query).not.toContain('queryNodes');
+    // CYPHER 25 rejects WHERE straight after the CALL block
+    expect(query).toMatch(/WITH node, score\s+WHERE score >=/);
+    expect(params).toEqual({ limit: 3, embedding: [0.1], projectIds: ['proj_test'], minSimilarity: 0.5 });
   });
 });
 

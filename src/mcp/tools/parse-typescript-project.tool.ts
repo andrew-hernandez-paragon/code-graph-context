@@ -6,7 +6,7 @@
 import { writeFileSync } from 'fs';
 import { constants as fsConstants } from 'fs';
 import { stat, access, realpath } from 'fs/promises';
-import { dirname, join, resolve, sep } from 'path';
+import { dirname, join, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { Worker } from 'worker_threads';
 
@@ -17,13 +17,8 @@ import { CORE_TYPESCRIPT_SCHEMA } from '../../core/config/schema.js';
 import { stopEmbeddingSidecar } from '../../core/embeddings/embedding-sidecar.js';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { ParserFactory, ProjectType } from '../../core/parsers/parser-factory.js';
+import { getProjectName, ProjectService } from '../../core/projects/index.js';
 import { detectChangedFiles } from '../../core/utils/file-change-detection.js';
-import {
-  resolveProjectId,
-  getProjectName,
-  UPSERT_PROJECT_QUERY,
-  UPDATE_PROJECT_STATUS_QUERY,
-} from '../../core/utils/project-id.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, FILE_PATHS, LOG_CONFIG, PARSING, CONFIG_FILE_PATTERNS } from '../constants.js';
 import {
@@ -84,12 +79,22 @@ const _validatePathWithinProject = async (filePath: string, projectPath: string)
 // Export for potential use by other modules
 export { _validatePathWithinProject as validatePathWithinProject };
 
+const chooseCodebaseId = async (projectPath: string, projectId: string | undefined): Promise<string> => {
+  const neo4jService = new Neo4jService();
+  try {
+    return await new ProjectService(neo4jService).chooseCodebaseId(projectPath, projectId);
+  } finally {
+    await neo4jService.close();
+  }
+};
+
 export const createParseTypescriptProjectTool = (server: McpServer): void => {
   server.registerTool(
     TOOL_NAMES.parseTypescriptProject,
     {
       title: TOOL_METADATA[TOOL_NAMES.parseTypescriptProject].title,
       description: TOOL_METADATA[TOOL_NAMES.parseTypescriptProject].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.parseTypescriptProject].annotations,
       inputSchema: {
         projectPath: z.string().describe('Path to the TypeScript project root directory'),
         tsconfigPath: z.string().describe('Path to TypeScript project tsconfig.json file'),
@@ -98,7 +103,12 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           .optional()
           .describe('Custom glob patterns for config files')
           .default(CONFIG_FILE_PATTERNS.defaultGlobs),
-        projectId: z.string().optional().describe('Project ID override; auto-generated from projectPath if omitted'),
+        projectId: z
+          .string()
+          .optional()
+          .describe(
+            'Id to store the codebase under. Omit it: the project already registered at projectPath is reused, otherwise an id is made from the path.',
+          ),
         clearExisting: z.boolean().optional().describe('Clear existing graph data for this project first'),
         excludeNodeTypes: z.array(z.string()).optional().describe('Node types to skip during parsing'),
         projectType: z
@@ -169,7 +179,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
         }
 
         // Resolve projectId early
-        const resolvedProjectId = resolveProjectId(projectPath, projectId);
+        const resolvedProjectId = await chooseCodebaseId(projectPath, projectId);
 
         // Handle async mode - return job ID immediately and process in Worker thread
         if (asyncMode) {
@@ -266,6 +276,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
         const neo4jService = new Neo4jService();
         const embeddingsService = new EmbeddingsService();
         const graphGeneratorHandler = new GraphGeneratorHandler(neo4jService, embeddingsService);
+        const projectService = new ProjectService(neo4jService);
 
         // Determine if we should use streaming import
         // Use lazyLoad = true for consistent glob-based file discovery (matches incremental parse)
@@ -293,10 +304,10 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
 
           // Create Project node BEFORE starting import (status: parsing)
           const projectName = await getProjectName(projectPath);
-          await neo4jService.run(UPSERT_PROJECT_QUERY, {
+          await projectService.upsertCodebase({
             projectId: resolvedProjectId,
             name: projectName,
-            path: resolve(projectPath),
+            path: projectPath,
             status: 'parsing',
           });
           await debugLog('Project node created with parsing status', { projectId: resolvedProjectId });
@@ -331,7 +342,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
             const edgeSummary = formatSessionEdgeRecoverySummary(edgeRecovery);
 
             // Update Project node status to complete
-            await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
+            await projectService.updateParseStatus({
               projectId: resolvedProjectId,
               status: 'complete',
               nodeCount: result.nodesImported,
@@ -353,7 +364,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
             );
           } catch (streamingError) {
             // Update Project node status to failed
-            await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
+            await projectService.updateParseStatus({
               projectId: resolvedProjectId,
               status: 'failed',
               nodeCount: 0,
@@ -367,10 +378,10 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
         // Standard non-streaming import
         // Create Project node BEFORE starting import (status: parsing)
         const projectName = await getProjectName(projectPath);
-        await neo4jService.run(UPSERT_PROJECT_QUERY, {
+        await projectService.upsertCodebase({
           projectId: resolvedProjectId,
           name: projectName,
-          path: resolve(projectPath),
+          path: projectPath,
           status: 'parsing',
         });
         await debugLog('Project node created with parsing status', { projectId: resolvedProjectId });
@@ -379,7 +390,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           neo4jService,
           tsconfigPath,
           projectPath,
-          projectId,
+          projectId: resolvedProjectId,
           clearExisting,
           projectType,
         });
@@ -431,7 +442,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           const edgeSummary = formatSessionEdgeRecoverySummary(edgeRecovery);
 
           // Update Project node status to complete
-          await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
+          await projectService.updateParseStatus({
             projectId: finalProjectId,
             status: 'complete',
             nodeCount: result.nodesImported,
@@ -474,7 +485,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           await debugLog('Neo4j import failed', neo4jError);
 
           // Update Project node status to failed
-          await neo4jService.run(UPDATE_PROJECT_STATUS_QUERY, {
+          await projectService.updateParseStatus({
             projectId: finalProjectId,
             status: 'failed',
             nodeCount: 0,
@@ -503,7 +514,7 @@ interface ParseProjectOptions {
   neo4jService: Neo4jService;
   tsconfigPath: string;
   projectPath: string;
-  projectId?: string;
+  projectId: string;
   clearExisting?: boolean;
   projectType?: string;
 }
@@ -529,18 +540,15 @@ interface ParseProjectResult {
 const parseProject = async (options: ParseProjectOptions): Promise<ParseProjectResult> => {
   const { neo4jService, tsconfigPath, projectPath, projectId, clearExisting = true, projectType = 'auto' } = options;
 
-  // Resolve projectId early - needed for incremental queries before parser is created
-  const resolvedId = resolveProjectId(projectPath, projectId);
-
   // Use lazyLoad = true for consistent glob-based file discovery (matches incremental parse)
   const parser =
     projectType === 'auto'
-      ? await ParserFactory.createParserWithAutoDetection(projectPath, tsconfigPath, resolvedId, true)
+      ? await ParserFactory.createParserWithAutoDetection(projectPath, tsconfigPath, projectId, true)
       : ParserFactory.createParser({
           workspacePath: projectPath,
           tsConfigPath: tsconfigPath,
           projectType: projectType as ProjectType,
-          projectId: resolvedId,
+          projectId,
           lazyLoad: true,
         });
 
@@ -553,7 +561,7 @@ const parseProject = async (options: ParseProjectOptions): Promise<ParseProjectR
     await parser.parseWorkspace();
   } else {
     // Incremental: detect changes and parse only affected files
-    const { filesToReparse, filesToDelete } = await detectChangedFiles(projectPath, neo4jService, resolvedId);
+    const { filesToReparse, filesToDelete } = await detectChangedFiles(projectPath, neo4jService, projectId);
     incrementalStats = { filesReparsed: filesToReparse.length, filesDeleted: filesToDelete.length };
 
     await debugLog('Incremental change detection', { filesToReparse, filesToDelete });
@@ -561,10 +569,10 @@ const parseProject = async (options: ParseProjectOptions): Promise<ParseProjectR
     const filesToRemoveFromGraph = [...filesToDelete, ...filesToReparse];
     if (filesToRemoveFromGraph.length > 0) {
       // Save cross-file edges before deletion (they'll be recreated after import)
-      savedCrossFileEdges = await getCrossFileEdges(neo4jService, filesToRemoveFromGraph, resolvedId);
+      savedCrossFileEdges = await getCrossFileEdges(neo4jService, filesToRemoveFromGraph, projectId);
       await debugLog('Saved cross-file edges', { count: savedCrossFileEdges.length, edges: savedCrossFileEdges });
 
-      await deleteSourceFileSubgraphs(neo4jService, filesToRemoveFromGraph, resolvedId);
+      await deleteSourceFileSubgraphs(neo4jService, filesToRemoveFromGraph, projectId);
     }
 
     if (filesToReparse.length > 0) {
@@ -574,7 +582,7 @@ const parseProject = async (options: ParseProjectOptions): Promise<ParseProjectR
       });
 
       // Load existing nodes from Neo4j for edge target matching
-      const existingNodes = await loadExistingNodesForEdgeDetection(neo4jService, filesToRemoveFromGraph, resolvedId);
+      const existingNodes = await loadExistingNodesForEdgeDetection(neo4jService, filesToRemoveFromGraph, projectId);
       await debugLog('Loaded existing nodes for edge detection', { count: existingNodes.length });
       parser.setExistingNodes(existingNodes);
 

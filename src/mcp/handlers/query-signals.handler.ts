@@ -2,7 +2,7 @@
  * Query Signals Handler — shared helpers
  *
  * Extracted from `search-codebase.tool.ts` so that both `search_codebase` and
- * the new `query_signals` tool can hit the underlying VECTOR_SEARCH Cypher
+ * the new `query_signals` tool can hit the underlying vector search Cypher
  * without going through `TraversalHandler` (which wraps results in
  * text-formatted traversal output — useful for `search_codebase`, not for a
  * fusing layer).
@@ -10,8 +10,8 @@
  * Behavior is logic-preserving: the Cypher params, similarity filter, and row
  * shape mirror what `search-codebase.tool.ts` did inline before extraction.
  *
- * 0013: `searchCodeRaw` accepts `projectIds: string[]` — the VECTOR_SEARCH
- * Cypher uses `IN $projectIds`. Each result row gains a `projectId` field.
+ * 0013: `searchCodeRaw` accepts `projectIds: string[]`, searched once per
+ * project inside the vector index. Each result row gains a `projectId` field.
  *
  * 0014: `searchCodeHybrid` adds a BM25 channel alongside the vector channel
  * and fuses the two by reciprocal rank. `searchCodeRaw` is unchanged so
@@ -26,22 +26,25 @@
 import { getEmbeddingSidecar } from '../../core/embeddings/embedding-sidecar.js';
 import { isOpenAIEnabled, isOpenAIAvailable } from '../../core/embeddings/embeddings.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
+import { nearestNeighborsInProjects, runProjectFilteredSearch } from '../../storage/neo4j/project-vector-search.js';
+import { VECTOR_INDEXES } from '../../storage/neo4j/vector-indexes.js';
 import { debugLog } from '../utils.js';
 
 // ---------------------------------------------------------------------------
-// VECTOR_SEARCH — projectIds variant (0013: IN instead of =)
+// VECTOR_SEARCH_MULTI: filtered inside the index, one search per project
 // ---------------------------------------------------------------------------
 
-/**
- * Same Cypher as QUERIES.VECTOR_SEARCH in neo4j.service.ts, but scoped to an
- * array of projectIds so multi-project fan-out works in a single query call.
- * Also projects `node.projectId` alongside other properties.
- */
 const VECTOR_SEARCH_MULTI = `
-  CALL db.index.vector.queryNodes('embedded_nodes_idx', toInteger($limit * coalesce($fetchMultiplier, 10)), $embedding)
-  YIELD node, score
-  WHERE node.projectId IN $projectIds AND score >= coalesce($minSimilarity, 0.3)
+  ${nearestNeighborsInProjects({
+    index: VECTOR_INDEXES.embeddedNodes,
+    node: 'node',
+    score: 'score',
+    queryVector: '$embedding',
+    neighbors: '$limit',
+  })}
   WITH node, score
+  WHERE score >= coalesce($minSimilarity, 0.3)
+  ORDER BY score DESC
   LIMIT toInteger($limit)
   RETURN {
     id: node.id,
@@ -60,7 +63,6 @@ export interface SearchCodeRawOptions {
   embedding: number[];
   limit: number;
   minSimilarity: number;
-  fetchMultiplier?: number;
 }
 
 export interface SearchCodeRawRow {
@@ -85,15 +87,19 @@ export interface SearchCodeRawRow {
  */
 export const searchCodeRaw = async (
   neo4jService: Neo4jService,
-  { projectIds, embedding, limit, minSimilarity, fetchMultiplier = 10 }: SearchCodeRawOptions,
+  { projectIds, embedding, limit, minSimilarity }: SearchCodeRawOptions,
 ): Promise<SearchCodeRawRow[]> => {
-  const vectorResults = await neo4jService.run(VECTOR_SEARCH_MULTI, {
-    limit,
-    embedding,
-    projectIds,
-    fetchMultiplier,
-    minSimilarity,
-  });
+  const vectorResults = await runProjectFilteredSearch(
+    neo4jService,
+    VECTOR_INDEXES.embeddedNodes,
+    VECTOR_SEARCH_MULTI,
+    {
+      limit,
+      embedding,
+      projectIds,
+      minSimilarity,
+    },
+  );
 
   // Cypher already filters by score >= minSimilarity, but defensive client-side
   // filter mirrors the behavior in `search-codebase.tool.ts` (qualifiedResults).
@@ -356,7 +362,6 @@ export const searchCodeHybrid = async (
       embedding,
       limit: candidatePool,
       minSimilarity,
-      fetchMultiplier,
     }),
     searchCodeLexical(neo4jService, { projectIds, query, limit: candidatePool }),
   ]);

@@ -3,14 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { searchSessionNotes } from '../session-recall.tool.js';
 
 describe('session note search without a chunk index', () => {
-  const params = { projectId: 'project', limit: 5, queryEmbedding: [0.1] };
+  const params = { projectIds: ['project'], limit: 5, queryEmbedding: [0.1] };
 
   it('returns chunk-aware results when the index is available', async () => {
     const rows = [{ id: 'note', relevance: 0.9 }];
     const run = vi.fn().mockResolvedValue(rows);
     expect(await searchSessionNotes({ run }, params)).toBe(rows);
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0][0]).toContain('session_note_chunks_idx');
+    const query: string = run.mock.calls[0][0];
+    expect(query.startsWith('CYPHER 25')).toBe(true);
+    expect(query).toContain('VECTOR INDEX session_notes_idx');
+    expect(query).toContain('VECTOR INDEX session_note_chunks_idx');
+    expect(query).toContain('UNWIND $projectIds AS scopeId');
+    expect(query).toContain('WHERE note.projectId = scopeId');
+    expect(query).toContain('WHERE chunk.projectId = scopeId');
+    expect(query).not.toContain('queryNodes');
   });
 
   it('falls back to parent note search when the optional chunk index is missing', async () => {
@@ -21,9 +28,16 @@ describe('session note search without a chunk index', () => {
       .mockResolvedValueOnce(rows);
     expect(await searchSessionNotes({ run }, params)).toBe(rows);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[1][0]).toContain('session_notes_idx');
+    expect(run.mock.calls[1][0]).toContain('VECTOR INDEX session_notes_idx');
     expect(run.mock.calls[1][0]).not.toContain('session_note_chunks_idx');
     expect(run.mock.calls[1][1]).toBe(params);
+  });
+
+  it('names the index when it cannot be searched by project', async () => {
+    const run = vi.fn().mockRejectedValue(Object.assign(new Error('filter not declared'), { gqlStatus: '22ND3' }));
+    await expect(searchSessionNotes({ run }, params)).rejects.toThrow(
+      'Vector index session_notes_idx does not declare projectId as a filter property',
+    );
   });
 
   it.each([

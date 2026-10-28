@@ -3,7 +3,7 @@
  * Common utility functions used across the MCP server
  */
 
-import { resolveProjectIdFromInput, LIST_PROJECTS_QUERY } from '../core/utils/project-id.js';
+import { Project, ProjectService } from '../core/projects/index.js';
 import { Neo4jService } from '../storage/neo4j/neo4j.service.js';
 
 import { MESSAGES } from './constants.js';
@@ -11,72 +11,95 @@ import { MESSAGES } from './constants.js';
 export { debugLog } from '../core/utils/file-utils.js';
 
 /**
- * Result type for project ID resolution
+ * Result type for project resolution
  */
-export type ResolveProjectIdResult =
-  | { success: true; projectId: string }
+export type ResolveProjectResult =
+  | { success: true; project: Project }
   | { success: false; error: ReturnType<typeof createErrorResponse> };
 
-/**
- * Resolve project ID with standardized error handling
- * Returns either the resolved projectId or an error response ready for tool return
- */
-export const resolveProjectIdOrError = async (
-  projectId: string,
-  neo4jService: Neo4jService,
-): Promise<ResolveProjectIdResult> => {
+const resolveWith = async (resolve: () => Promise<Project>): Promise<ResolveProjectResult> => {
   try {
-    const resolved = await resolveProjectIdFromInput(projectId, neo4jService);
-    return { success: true, projectId: resolved };
+    return { success: true, project: await resolve() };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { success: false, error: createErrorResponse(message) };
   }
 };
 
-/**
- * Auto-resolve projectId when omitted. If only one project exists, use it.
- * If multiple exist, return error listing them. If none, return error.
- */
-export const autoResolveProjectId = async (
-  projectId: string | undefined,
-  neo4jService: Neo4jService,
-): Promise<ResolveProjectIdResult> => {
-  // If projectId provided, use normal resolution
-  if (projectId) {
-    return resolveProjectIdOrError(projectId, neo4jService);
-  }
+/** Read rule: an existing project of any kind, by id, name or path. */
+export const findProjectOrError = (input: string, neo4jService: Neo4jService): Promise<ResolveProjectResult> =>
+  resolveWith(() => new ProjectService(neo4jService).findProject(input));
 
-  // Auto-resolve: query all projects
-  try {
-    const projects = await neo4jService.run(LIST_PROJECTS_QUERY, { includeSynthetic: false });
-    if (projects.length === 0) {
-      return {
-        success: false,
-        error: createErrorResponse('No projects found. Use parse_typescript_project to add a project first.'),
-      };
-    }
-    if (projects.length === 1) {
-      return { success: true, projectId: projects[0].projectId };
-    }
-    // Multiple projects — can't auto-resolve
-    const projectList = projects.map((p: any) => `  - ${p.name || p.projectId} (${p.projectId})`).join('\n');
+/** Write rule: as the read rule, and a git root that encloses a path is registered as a directory. */
+export const findOrRegisterProjectOrError = (
+  input: string,
+  neo4jService: Neo4jService,
+): Promise<ResolveProjectResult> => resolveWith(() => new ProjectService(neo4jService).findOrRegisterProject(input));
+
+export type ResolveProjectsResult =
+  | { success: true; projects: Project[] }
+  | { success: false; error: ReturnType<typeof createErrorResponse> };
+
+/** Read rule for several inputs: every project found once, or one error naming each input that failed. */
+export const findProjectsOrError = async (
+  inputs: readonly string[],
+  neo4jService: Neo4jService,
+): Promise<ResolveProjectsResult> => {
+  const projectService = new ProjectService(neo4jService);
+  const outcomes = await Promise.allSettled(inputs.map((input) => projectService.findProject(input)));
+  const failures = outcomes.flatMap((outcome, index) =>
+    outcome.status === 'rejected'
+      ? [`'${inputs[index]}': ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`]
+      : [],
+  );
+  if (failures.length > 0) {
     return {
       success: false,
-      error: createErrorResponse(`Multiple projects found. Specify projectId:\n${projectList}`),
+      error: createErrorResponse(`${failures.length} of ${inputs.length} projects not found. ${failures.join(' | ')}`),
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, error: createErrorResponse(message) };
   }
+  const found = outcomes.flatMap((outcome) => (outcome.status === 'fulfilled' ? [outcome.value] : []));
+  return { success: true, projects: [...new Map(found.map((project) => [project.projectId, project])).values()] };
+};
+
+/** Code rule: a parsed codebase; a directory or collection gets an error naming the next step. */
+export const findCodebaseOrError = (input: string, neo4jService: Neo4jService): Promise<ResolveProjectResult> =>
+  resolveWith(() => new ProjectService(neo4jService).findCodebase(input));
+
+/**
+ * Auto-resolve a codebase when the id is omitted. If only one codebase exists, use it.
+ * If multiple exist, return error listing them. If none, return error.
+ */
+export const resolveSoleCodebaseOrError = async (
+  projectId: string | undefined,
+  neo4jService: Neo4jService,
+): Promise<ResolveProjectResult> => {
+  if (projectId) {
+    return findCodebaseOrError(projectId, neo4jService);
+  }
+
+  return resolveWith(async () => {
+    const codebases = await new ProjectService(neo4jService).list(['codebase']);
+    if (codebases.length === 0) {
+      throw new Error('No parsed codebases found. Use parse_typescript_project to add one first.');
+    }
+    if (codebases.length > 1) {
+      const projectList = codebases.map((p) => `  - ${p.name} (${p.projectId})`).join('\n');
+      throw new Error(`Multiple codebases found. Specify projectId:\n${projectList}`);
+    }
+    return codebases[0];
+  });
 };
 
 /**
  * Standard error response format for MCP tools
  */
-export const createErrorResponse = (error: Error | string): { content: Array<{ type: 'text'; text: string }> } => {
+export const createErrorResponse = (
+  error: Error | string,
+): { content: Array<{ type: 'text'; text: string }>; isError: true } => {
   const errorMessage = error instanceof Error ? error.message : error;
   return {
+    isError: true,
     content: [
       {
         type: 'text',

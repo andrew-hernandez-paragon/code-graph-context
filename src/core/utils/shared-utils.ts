@@ -132,6 +132,9 @@ export const toNumber = (value: unknown): number => {
   return 0;
 };
 
+/** As toNumber, but a missing value stays null instead of becoming 0. */
+export const toNumberOrNull = (value: unknown): number | null => (value == null ? null : toNumber(value));
+
 /**
  * Check if file path indicates a UI component.
  * Must be in UI component directory AND be a React/Vue component file.

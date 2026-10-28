@@ -10,7 +10,7 @@ import { resolve } from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { resolveProjectId } from '../../core/utils/project-id.js';
+import { ProjectService } from '../../core/projects/index.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
 import { watchManager } from '../services/watch-manager.js';
@@ -19,7 +19,10 @@ import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.j
 const inputSchema = z.object({
   projectPath: z.string().describe('Path to the TypeScript project root directory'),
   tsconfigPath: z.string().describe('Path to TypeScript project tsconfig.json file'),
-  projectId: z.string().optional().describe('Optional project ID override (auto-generated from path if omitted)'),
+  projectId: z
+    .string()
+    .optional()
+    .describe('Optional codebase id or name; defaults to the codebase registered at projectPath'),
   debounceMs: z.number().optional().default(1000).describe('Debounce delay in milliseconds'),
 });
 
@@ -29,6 +32,7 @@ export const createStartWatchProjectTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.startWatchProject].title,
       description: TOOL_METADATA[TOOL_NAMES.startWatchProject].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.startWatchProject].annotations,
       inputSchema: inputSchema.shape,
     },
     async (args: z.infer<typeof inputSchema>) => {
@@ -67,23 +71,18 @@ export const createStartWatchProjectTool = (server: McpServer): void => {
           throw error;
         }
 
-        // Resolve project ID
-        const projectId = args.projectId ?? (await resolveProjectId(resolvedProjectPath));
-
-        // Check if project has been indexed
         const neo4jService = new Neo4jService();
+        let projectId: string;
         try {
-          const result = await neo4jService.run(
-            'MATCH (p:Project {projectId: $projectId}) RETURN p.projectId AS projectId',
-            { projectId },
-          );
-          if (result.length === 0) {
+          const project = await new ProjectService(neo4jService).findCodebase(args.projectId ?? resolvedProjectPath);
+          if (!args.projectId && (project.path === null || resolve(project.path) !== resolvedProjectPath)) {
             return createErrorResponse(
               new Error(
-                `Project has not been indexed yet. Run parse_typescript_project first to create the initial graph, then start the watcher for incremental updates.`,
+                `Project path ${resolvedProjectPath} is not the root of codebase '${project.name}' (${project.projectId}), which is at ${project.path}. Pass that root as projectPath.`,
               ),
             );
           }
+          projectId = project.projectId;
         } finally {
           await neo4jService.close();
         }

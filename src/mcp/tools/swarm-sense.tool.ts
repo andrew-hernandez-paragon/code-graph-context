@@ -7,8 +7,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { createErrorResponse, createSuccessResponse, findProjectOrError, debugLog } from '../utils.js';
 
 import { PHEROMONE_TYPES } from './swarm-constants.js';
 
@@ -103,8 +103,9 @@ export const createSwarmSenseTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmSense].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmSense].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmSense].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path (e.g., "backend" or "proj_a1b2c3d4e5f6")'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         types: z
           .array(z.enum(PHEROMONE_TYPES as [string, ...string[]]))
           .optional()
@@ -147,12 +148,12 @@ export const createSwarmSenseTool = (server: McpServer): void => {
       const neo4jService = new Neo4jService();
 
       // Resolve project ID
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         // Resolve filePaths to nodeIds and merge with any explicit nodeIds

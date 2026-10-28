@@ -1,23 +1,13 @@
 /**
- * Session edge recovery (Phase 1.4)
- *
- * After `CLEAR_PROJECT` runs (which preserves SessionNote, SessionBookmark,
- * Pheromone, and Project nodes per the denylist in `neo4j.service.ts`),
- * code nodes are deleted and rebuilt with deterministic IDs. The :ABOUT,
- * :REFERENCES, and :MARKS edges from preserved nodes to deleted code nodes
- * died with the code nodes — recreate them by matching against the rebuilt
- * graph using the IDs persisted on each preserved node:
- *
- * - SessionNote.aboutNodeIds       (added as a property in Phase 1.3)
- * - SessionBookmark.workingSetNodeIds  (already a property)
- * - Pheromone.nodeId               (already a property)
- *
- * All recovery queries are idempotent (`MERGE`) — safe to run more than once.
- * Orphan references (IDs no longer present in the graph after reparse) are
- * surfaced via `COUNT_STALE_ABOUT_REFS` so the user can decide whether to
- * mark the affected notes stale.
+ * Session edge recovery
+ * After a reparse deletes and rebuilds code nodes, recreates the :ABOUT, :REFERENCES and :MARKS edges that
+ * preserved session nodes had to them, matching on the ids and paths stored on each preserved node.
  */
 
+import { sep } from 'path';
+
+import { normalizePath, ProjectService } from '../../core/projects/index.js';
+import { toNumber } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { debugLog } from '../utils.js';
 
@@ -28,20 +18,23 @@ export interface SessionEdgeRecoveryResult {
   staleAboutRefs: number;
 }
 
-const toNumber = (v: unknown): number => {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object' && v && 'toNumber' in (v as object)) {
-    return (v as { toNumber: () => number }).toNumber();
+const findProjectRoot = async (neo4jService: Neo4jService, projectId: string): Promise<string | null> => {
+  try {
+    return (await new ProjectService(neo4jService).findById(projectId))?.path ?? null;
+  } catch (error) {
+    await debugLog('Session edge recovery: project lookup failed, path anchors are not relinked (non-fatal)', {
+      projectId,
+      error: String(error),
+    });
+    return null;
   }
-  return Number(v) || 0;
 };
 
 /**
  * Recreate :ABOUT, :REFERENCES, and :MARKS edges from preserved
  * session/coordination nodes to (possibly newly recreated) code nodes.
  *
- * Idempotent — safe to call multiple times. Failures in any single query
+ * Idempotent, safe to call multiple times. Failures in any single query
  * are logged and reported as zero counts; partial recovery is preferable
  * to throwing and aborting the whole parse.
  */
@@ -49,9 +42,17 @@ export const recoverSessionEdges = async (
   neo4jService: Neo4jService,
   projectId: string,
 ): Promise<SessionEdgeRecoveryResult> => {
+  const root = await findProjectRoot(neo4jService, projectId);
+  const params = {
+    projectId,
+    projectIdPrefix: `${projectId}:`,
+    // A project without a directory has no paths under it.
+    rootPrefix: root === null ? null : `${normalizePath(root).replace(/[\\/]+$/, '')}${sep}`,
+  };
+
   const runOne = async (query: string, label: string): Promise<number> => {
     try {
-      const rows = await neo4jService.run(query, { projectId });
+      const rows = await neo4jService.run(query, params);
       return toNumber(rows[0]?.recreated ?? rows[0]?.staleCount);
     } catch (error) {
       await debugLog('Session edge recovery: query failed (non-fatal)', {
@@ -62,12 +63,17 @@ export const recoverSessionEdges = async (
     }
   };
 
-  const [aboutEdges, referencesEdges, marksEdges, staleAboutRefs] = await Promise.all([
-    runOne(QUERIES.RECREATE_ABOUT_EDGES, 'RECREATE_ABOUT_EDGES'),
-    runOne(QUERIES.RECREATE_REFERENCES_EDGES, 'RECREATE_REFERENCES_EDGES'),
-    runOne(QUERIES.RECREATE_MARKS_EDGES, 'RECREATE_MARKS_EDGES'),
-    runOne(QUERIES.COUNT_STALE_ABOUT_REFS, 'COUNT_STALE_ABOUT_REFS'),
-  ]);
+  const [aboutNodeEdges, aboutPathEdges, referencesNodeEdges, referencesPathEdges, marksEdges, staleAboutRefs] =
+    await Promise.all([
+      runOne(QUERIES.RECREATE_ABOUT_EDGES, 'RECREATE_ABOUT_EDGES'),
+      runOne(QUERIES.RECREATE_ABOUT_PATH_EDGES, 'RECREATE_ABOUT_PATH_EDGES'),
+      runOne(QUERIES.RECREATE_REFERENCES_EDGES, 'RECREATE_REFERENCES_EDGES'),
+      runOne(QUERIES.RECREATE_REFERENCES_PATH_EDGES, 'RECREATE_REFERENCES_PATH_EDGES'),
+      runOne(QUERIES.RECREATE_MARKS_EDGES, 'RECREATE_MARKS_EDGES'),
+      runOne(QUERIES.COUNT_STALE_ABOUT_REFS, 'COUNT_STALE_ABOUT_REFS'),
+    ]);
+  const aboutEdges = aboutNodeEdges + aboutPathEdges;
+  const referencesEdges = referencesNodeEdges + referencesPathEdges;
 
   await debugLog('Session edge recovery complete', {
     projectId,
@@ -80,11 +86,7 @@ export const recoverSessionEdges = async (
   return { aboutEdges, referencesEdges, marksEdges, staleAboutRefs };
 };
 
-/**
- * Format a one-line summary suitable for inclusion in parse-success messages.
- * Returns empty string when there's nothing meaningful to report so the parse
- * output stays clean for fresh-project / no-session-data cases.
- */
+/** A one-line summary for parse-success messages; empty when nothing was restored. */
 export const formatSessionEdgeRecoverySummary = (result: SessionEdgeRecoveryResult): string => {
   const total = result.aboutEdges + result.referencesEdges + result.marksEdges;
   if (total === 0 && result.staleAboutRefs === 0) {

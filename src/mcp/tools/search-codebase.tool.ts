@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA, DEFAULTS } from '../constants.js';
+import { TOOL_NAMES, TOOL_METADATA, DEFAULTS, PROJECT_ID_DESCRIPTION } from '../constants.js';
 import { searchCodeHybrid, type FusedSearchRow } from '../handlers/query-signals.handler.js';
 import { searchMatchesOf, withSearchMatches } from '../handlers/search-matches.js';
 import { TraversalHandler } from '../handlers/traversal.handler.js';
@@ -18,7 +18,7 @@ import {
   createErrorResponse,
   debugLog,
   sanitizeNumericInput,
-  resolveProjectIdOrError,
+  findCodebaseOrError,
 } from '../utils.js';
 
 /**
@@ -38,9 +38,14 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.searchCodebase].title,
       description: TOOL_METADATA[TOOL_NAMES.searchCodebase].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.searchCodebase].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path (e.g., "backend" or "proj_a1b2c3d4e5f6")'),
-        query: z.string().describe('Natural language query to search the codebase'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.codebase),
+        query: z
+          .string()
+          .describe(
+            'What to find, in natural language or as identifiers, e.g. "where session notes are saved" or "createSessionSaveTool"',
+          ),
         maxDepth: z
           .number()
           .int()
@@ -62,11 +67,17 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           .optional()
           .describe('Number of top vector matches; best match is traversed, others shown as alternatives')
           .default(3),
-        minSimilarity: z.number().optional().describe('Minimum similarity score threshold').default(0.65),
+        minSimilarity: z
+          .number()
+          .optional()
+          .describe(
+            "Floor for the meaning (vector) match only, on Neo4j's score (1 + cosine) / 2, so 0.5 is cosine 0. Keyword matches are not filtered by it.",
+          )
+          .default(DEFAULTS.searchMinSimilarity),
         useWeightedTraversal: z
           .boolean()
           .optional()
-          .describe('Score each traversed node for relevance; higher quality but slower')
+          .describe('At each depth, keep the nodes most relevant to the query instead of the first found; slower')
           .default(true),
       },
     },
@@ -79,15 +90,15 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
       includeCode = true,
       snippetLength = DEFAULTS.codeSnippetLength,
       topK = 3,
-      minSimilarity = 0.65,
+      minSimilarity = DEFAULTS.searchMinSimilarity,
       useWeightedTraversal = true,
     }) => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID from name, path, or ID
-        const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+        const projectResult = await findCodebaseOrError(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
-        const resolvedProjectId = projectResult.projectId;
+        const resolvedProjectId = projectResult.project.projectId;
 
         // Sanitize numeric inputs to ensure integers (Neo4j LIMIT requires integers)
         const sanitizedMaxDepth = sanitizeNumericInput(maxDepth, DEFAULTS.traversalDepth, 10);
@@ -117,7 +128,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
         if (qualifiedResults.length === 0) {
           return createEmptyResponse(
             `No code matched, by embedding similarity >= ${minSimilarity} or by keyword`,
-            'Try rephrasing your query or lowering the minSimilarity threshold.',
+            'Try rephrasing your query or lowering minSimilarity.',
           );
         }
 

@@ -2,9 +2,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
 import { SwarmReleaseHandler, SwarmAbandonHandler } from '../handlers/swarm/index.js';
-import { createErrorResponse, createSuccessResponse, resolveProjectIdOrError, debugLog } from '../utils.js';
+import { createErrorResponse, createSuccessResponse, findProjectOrError, debugLog } from '../utils.js';
 
 export const createSwarmReleaseTaskTool = (server: McpServer): void => {
   server.registerTool(
@@ -12,8 +12,9 @@ export const createSwarmReleaseTaskTool = (server: McpServer): void => {
     {
       title: TOOL_METADATA[TOOL_NAMES.swarmReleaseTask].title,
       description: TOOL_METADATA[TOOL_NAMES.swarmReleaseTask].description,
+      annotations: TOOL_METADATA[TOOL_NAMES.swarmReleaseTask].annotations,
       inputSchema: {
-        projectId: z.string().describe('Project ID, name, or path'),
+        projectId: z.string().describe(PROJECT_ID_DESCRIPTION.any),
         taskId: z.string().describe('Task ID to release'),
         agentId: z.string().describe('Your agent identifier'),
         reason: z.string().optional().describe('Reason for releasing or abandoning'),
@@ -23,12 +24,12 @@ export const createSwarmReleaseTaskTool = (server: McpServer): void => {
     async ({ projectId, taskId, agentId, reason, trackAbandonment = false }) => {
       const neo4jService = new Neo4jService();
 
-      const projectResult = await resolveProjectIdOrError(projectId, neo4jService);
+      const projectResult = await findProjectOrError(projectId, neo4jService);
       if (!projectResult.success) {
         await neo4jService.close();
         return projectResult.error;
       }
-      const resolvedProjectId = projectResult.projectId;
+      const resolvedProjectId = projectResult.project.projectId;
 
       try {
         if (trackAbandonment) {
