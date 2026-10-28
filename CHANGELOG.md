@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.7.1] - Calibrated Recall - 2026-10-28
+
+Note recall returns fewer weak matches by default.
+
+### Changed
+
+- **Note recall defaults to a similarity floor calibrated per embedding model.** For `BAAI/bge-base-en-v1.5` the floor is 0.80 on the tools' `(1 + cosine) / 2` scale, which is cosine 0.60. On 812 blind-labeled pairs from real recall queries, it raised the share of returned notes that are relevant from 0.31 to 0.39 and cut notes per call from 5.0 to 3.9, while recall of relevant notes fell only from 0.75 to 0.72. Other models keep 0.30. `session_recall` and the notes section of `query_signals` use it when `minSimilarity` is omitted; a caller's value still wins, `query_signals`' code section keeps 0.5, and bookmark matching, which was not measured, keeps 0.30. An empty recall now says no note was close enough. Method and numbers: `docs/code-graph-context/research/recall-relevance-calibration.md` in the owner's docs tree. (`src/core/embeddings/embedding-config.ts`)
+
 ## [5.7.0] - Memory Maintenance - 2026-10-28
 
 Notes can move between projects, a project can be deleted without losing its memory, a project embedded with another model is reported instead of silently returning nothing, and upgrades keep the embedding sidecar's Python environment.
