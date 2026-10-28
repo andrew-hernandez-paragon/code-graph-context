@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.7.0] - Memory Maintenance - 2026-10-28
+
+Notes can move between projects, a project can be deleted without losing its memory, a project embedded with another model is reported instead of silently returning nothing, and upgrades keep the embedding sidecar's Python environment.
+
+### Added
+
+- **`code-graph-context project delete <project>`** removes a project and its graph data. Its notes, chunks and bookmarks must be moved (`--move-memory-to <project>`) or deleted (`--delete-memory`) explicitly; with neither, it refuses and prints the counts. Moved notes lose anchors into the deleted project and keep their file anchors; deliberations scoped to it are re-scoped to the target. `--dry-run` prints what would move and what would be deleted, and the command asks before deleting unless `--yes`. It is a CLI command only, because deleting a project is a decision for a person, not an agent. (`src/core/projects/project-deletion.service.ts`, `src/cli/project-delete.ts`)
+- **`session_update` `moveToProjectId`** moves a note and its chunks to another project or collection, keeping its anchors.
+- **Embedding stamps.** Each codebase records `embeddingModel` and `embeddingDimensions` when it is parsed, and startup backfills them from a stored vector. `list_projects` shows them, and `search_codebase`, `query_signals` (code) and `detect_duplicate_code` add a warning when a project was embedded with a model or dimension other than the server's, naming both and the fix (re-parse). Before, such a project's search returned nothing with no explanation. (`src/core/projects/project-embedding.ts`)
+
+### Changed
+
+- **The sidecar's Python environment lives at `~/.local/share/code-graph-context/sidecar-venv`** (under `CGC_DATA_DIR`), not inside the installed package, so `npm i -g` no longer deletes it and the first parse after an upgrade no longer times out rebuilding torch. Python is chosen in this order: `PYTHON_EXECUTABLE`, the new environment, a legacy `sidecar/.venv` in the package, system Python. `init` moves a legacy environment to the new path when it can, and installs dependencies with `python -m pip`. (`src/core/embeddings/sidecar-venv.ts`)
+
+### Removed
+
+- The note search's fallback to parent-only search when the chunk index was missing, chosen by matching error text. Server start creates every vector index, so a missing chunk index now surfaces as the error that names it.
+
 ## [5.6.0] - Memory Scopes - 2026-10-27
 
 Memory works in any project, not only parsed codebases, and the server now tells agents how its tools fit together.
