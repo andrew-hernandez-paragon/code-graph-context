@@ -3,7 +3,7 @@
 [![npm version](https://badge.fury.io/js/code-graph-context.svg)](https://www.npmjs.com/package/code-graph-context)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-007ACC?logo=typescript&logoColor=white)](https://typescriptlang.org/)
-[![Neo4j](https://img.shields.io/badge/Neo4j-5.23+-018bff?logo=neo4j&logoColor=white)](https://neo4j.com/)
+[![Neo4j](https://img.shields.io/badge/Neo4j-2026.02+-018bff?logo=neo4j&logoColor=white)](https://neo4j.com/)
 [![NestJS](https://img.shields.io/badge/NestJS-Compatible-E0234E?logo=nestjs&logoColor=white)](https://nestjs.com/)
 [![OpenAI](https://img.shields.io/badge/OpenAI-Optional-412991?logo=openai&logoColor=white)](https://openai.com/)
 [![MCP](https://img.shields.io/badge/MCP-Server-blue)](https://modelcontextprotocol.io/)
@@ -424,7 +424,8 @@ See [`skills/swarm/SKILL.md`](skills/swarm/SKILL.md) for the full documentation.
 | Tool | Description |
 |------|-------------|
 | **Discovery** | |
-| `list_projects` | List parsed projects in the database |
+| `list_projects` | List every project (codebase, directory, collection) with memory counts |
+| `create_project` | Register a directory or a named collection that holds memories |
 | `search_codebase` | Semantic search using vector embeddings |
 | `traverse_from_node` | Explore relationships from a node |
 | `natural_language_to_cypher` | Convert questions to Cypher queries |
@@ -446,6 +447,12 @@ See [`skills/swarm/SKILL.md`](skills/swarm/SKILL.md) for the full documentation.
 | `swarm_pheromone` | Leave coordination markers |
 | `swarm_sense` | Query what others are doing |
 | `swarm_cleanup` | Clean up after swarm completion |
+| **Memory** | |
+| `session_save` | Save a note or bookmark in any project |
+| `session_recall` | Recall notes and bookmarks from one or more projects |
+| `session_update` | Revise a saved note in place |
+| `cleanup_session` | Delete expired notes and old bookmarks |
+| `query_signals` | One call across code, notes and pheromones |
 | **Utility** | |
 | `test_neo4j_connection` | Verify database connectivity |
 
@@ -471,18 +478,23 @@ detect_dead_code → detect_duplicate_code → prioritize cleanup
 swarm_post_task → swarm_claim_task → swarm_complete_task → swarm_get_tasks(includeStats) → swarm_cleanup
 ```
 
-### Multi-Project Support
+### Projects and Memory
 
-All query tools require `projectId` for isolation. You can use:
-- **Project ID**: `proj_a1b2c3d4e5f6` (auto-generated)
-- **Project name**: `my-backend` (from package.json)
-- **Project path**: `/path/to/project` (resolved automatically)
+Every tool takes `projectId`: an id, a name, or a path. A path inside a registered project resolves to that project, and a git worktree to its main repository.
+
+| Kind | What it is | Works with |
+|------|-----------|------------|
+| `codebase` | A parsed TypeScript repository (`parse_typescript_project`) | Code tools and memory |
+| `directory` | A local directory that is not parsed, such as Terraform, Python or docs (`create_project`) | Memory only |
+| `collection` | A named set of memories with no directory (`create_project`) | Memory only |
+
+`list_projects` shows every project with its kind and memory counts. `session_save` on a path inside an unregistered git repository registers it as a directory. `session_recall` takes `projectIds` to recall across several projects at once. Anchor a note with `aboutNodeIds` (from `search_codebase`) or `aboutPaths` (files and folders); recall reports `staleAboutNodeIds`, `missingAboutPaths` and `changedAboutPaths` when an anchor no longer matches. Replace a note with `session_save` and `supersedes: [oldId]`.
 
 ```typescript
-// These all work:
 search_codebase({ projectId: "my-backend", query: "auth" })
-search_codebase({ projectId: "proj_a1b2c3d4e5f6", query: "auth" })
-search_codebase({ projectId: "/path/to/my-backend", query: "auth" })
+create_project({ kind: "directory", path: "/path/to/terraform" })
+create_project({ kind: "collection", name: "workflow", description: "How we work" })
+session_recall({ projectIds: ["my-backend", "workflow"], query: "token refresh" })
 ```
 
 ---

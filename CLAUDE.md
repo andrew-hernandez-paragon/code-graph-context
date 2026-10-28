@@ -44,25 +44,30 @@ The parser uses two schema layers:
 
 Nodes have both `coreType` (AST) and `semanticType` (framework interpretation).
 
-### Multi-Project Support
+### Projects and Memory
 
-The system supports multiple projects in a single Neo4j database through project isolation:
+One Neo4j holds many projects. Every tool takes `projectId`: an id (`proj_<12-hex-chars>`), a name, or a path. A path inside a registered project resolves to that project, and a git worktree to its main repository. A project has one of three kinds:
 
-- **Project ID Format**: `proj_<12-hex-chars>` (e.g., `proj_a1b2c3d4e5f6`)
-- **Auto-generation**: If not provided, projectId is generated deterministically from the project path
-- **Explicit Override**: Pass `projectId` to `parse_typescript_project` to use a custom ID
-- **Isolation**: All queries are automatically scoped to the project - nodes from different projects never interfere
+| Kind | What it is | Works with |
+|------|-----------|------------|
+| `codebase` | A parsed TypeScript repository | Code tools and memory |
+| `directory` | A local directory that is not parsed (Terraform, Python, docs) | Memory only |
+| `collection` | A named set of memories with no directory, such as `workflow` | Memory only |
 
-**Usage in Tools:**
+- `list_projects` shows every project with its kind and memory counts; `kinds` filters.
+- `parse_typescript_project` adds a codebase. The id is the explicit `projectId`, else the project already registered at `projectPath`, else a hash of the path. A directory project at that path becomes the codebase and keeps its memories.
+- `create_project` adds a directory (`path`) or a collection (`name`, `description`). Calling it again returns the existing project with `created=false`.
+- `session_save` on a path inside an unregistered git repository registers that repository as a directory.
+- Code tools (`search_codebase`, `traverse_from_node`, `impact_analysis`, `natural_language_to_cypher`, `start_watch_project`) need a codebase and say so when given another kind.
+- Memory tools work on any kind. `session_recall` takes `projectIds` (up to 10) to recall across projects in one call.
+- Anchor a note with `aboutNodeIds` (code node ids from `search_codebase`) or `aboutPaths` (files and folders); bookmarks use `workingSetNodeIds` or `workingSetPaths`. Recall reports `staleAboutNodeIds`, `missingAboutPaths` and `changedAboutPaths`. Replace a note with `session_save` and `supersedes: [oldId]`.
+- Queries are scoped to the project: nodes from different projects never interfere.
+
 ```typescript
-// All query tools require projectId
 search_codebase({ projectId: "proj_abc123...", query: "..." })
 traverse_from_node({ projectId: "proj_abc123...", nodeId: "..." })
-impact_analysis({ projectId: "proj_abc123...", nodeId: "..." })
-
-// parse_typescript_project returns the resolved projectId
-const result = await parse_typescript_project({ projectPath: "/path/to/project" });
-// result.resolvedProjectId => "proj_a1b2c3d4e5f6"
+session_recall({ projectIds: ["backend", "workflow"], query: "token refresh" })
+create_project({ kind: "collection", name: "workflow", description: "How we work" })
 ```
 
 ### Migration from Pre-Multi-Project Versions
@@ -100,7 +105,8 @@ If upgrading from a version without multi-project support, note these breaking c
 | `natural_language_to_cypher` | Advanced — convert NL to Cypher queries (requires OpenAI) |
 | `detect_dead_code` | Find unused exports, uncalled methods |
 | `detect_duplicate_code` | Find structural and semantic duplicates |
-| `list_projects` | List parsed projects |
+| `list_projects` | List every project with its kind and memory counts |
+| `create_project` | Register a directory or a named collection that holds memories |
 | `test_neo4j_connection` | Diagnostic — verify Neo4j connectivity |
 | `swarm_claim_task` | Claim a task from the queue |
 | `swarm_release_task` | Release or abandon a claimed task |
@@ -112,8 +118,11 @@ If upgrading from a version without multi-project support, note these breaking c
 | `swarm_sense` | Query active pheromones |
 | `swarm_cleanup` | Bulk delete pheromones/tasks |
 | `swarm_message` | Direct agent-to-agent messaging |
-| `session_save` | Save bookmark or note (unified) |
-| `session_recall` | Restore bookmark or search notes (unified) |
+| `session_save` | Save a note or bookmark in any project (unified) |
+| `session_recall` | Recall notes and bookmarks from one or more projects (unified) |
+| `session_update` | Revise a saved note in place |
+| `query_signals` | One call across code, notes and pheromones |
+| `query_signals_outcome` | Record which query_signals results you cited |
 | `cleanup_session` | Remove expired session data |
 | `start_watch_project` | Watch for file changes |
 | `stop_watch_project` | Stop watching |
@@ -157,7 +166,7 @@ traverse_from_node({ projectId: "...", nodeId: "...", displayOptions: { includeC
 
 ## Dependencies
 
-- **Neo4j 5.0+** with APOC plugin required
+- **Neo4j 2026.02+** with APOC plugin required (project-filtered vector search; the server logs an error at start and skips the vector index rebuild on older versions)
 - **Python 3.10+** for local embeddings (sidecar)
 - **ts-morph** for TypeScript AST parsing
 - **OpenAI API** (optional) for embeddings and NL queries
