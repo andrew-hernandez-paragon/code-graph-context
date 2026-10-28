@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.0] - Memory Scopes - 2026-10-27
+
+Memory works in any project, not only parsed codebases, and the server now tells agents how its tools fit together.
+
+**Requires Neo4j 2026.02 or later.** Vector search now filters by project inside the index (CYPHER 25 `SEARCH` and `CREATE VECTOR INDEX ... WITH [n.projectId]`), which Neo4j 5.x rejects. On an older server, start logs one error naming the found version and skips the vector index rebuild, and `test_neo4j_connection` reports the version and whether filtered search is supported.
+
+- **Native (Homebrew) users:** run `brew upgrade neo4j`. If the store is on 5.x, Neo4j needs 5.26 first; upgrading a 5.26 store in place works.
+- **Docker users:** `init` now creates `neo4j:2026.02.2-community`, but an existing container keeps its image, and `init --force` refuses to recreate a 5.x container on its 5.x volume (the new image cannot open it). Run `code-graph-context migrate-from-docker`: it upgrades the store through 5.26 and moves it to the native Neo4j.
+
+### Added
+
+- **Project kinds.** A project is a `codebase` (parsed), a `directory` (a local directory that is not parsed) or a `collection` (a named set of memories with no directory). `create_project` registers a directory or a collection; `list_projects` shows each project's kind, memory counts and a `kinds` filter. A path inside a known project resolves to it, a git worktree to its main repository, and `session_save` on an unregistered git repository registers it as a directory. (`src/core/projects/`, `src/mcp/tools/create-project.tool.ts`)
+- **Memory in any project.** `session_save` and `session_update` take `aboutPaths` (notes) and `workingSetPaths` (bookmarks); `session_recall` takes `projectIds` (up to 10) and reports `missingAboutPaths` and `changedAboutPaths`. (`src/mcp/tools/session-*.tool.ts`)
+- **Server instructions.** The server sends instructions that name the project kinds and the order to use the tools in: recall before working, save after a discovery, check stale anchors, resume from a bookmark. (`src/mcp/constants.ts`, `src/mcp/create-server.ts`)
+- **Tool annotations.** Every tool sets `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint: false` explicitly, so a client can run reads in parallel and retry safe calls.
+- **`query_signals` `unresolvedProjectErrors`.** When some of `projectIds` do not resolve, `unresolvedProjectIds` lists those inputs and `unresolvedProjectErrors` holds the matching messages, each naming the next call.
+
+### Changed
+
+- **Tool descriptions open with what the tool does, in the words an agent searches with, and name the tool that supplies its inputs.** `list_projects` no longer calls itself rarely needed. Every tool's `projectId` reads the same.
+- **Errors set `isError: true`**, so a client can tell a failure from a result. (`src/mcp/utils.ts`)
+- **`search_codebase` `minSimilarity` defaults to 0.5**, not 0.65. It gates only the meaning (vector) match, on Neo4j's `(1 + cosine) / 2` score.
+- **The server reports its name as `code-graph-context` and the package version**, not `codebase-graph` 1.0.0.
+- **Vector search filters by project inside the index**, so a large project no longer crowds out a small one. The vector indexes are rebuilt on server start.
+
+### Removed
+
+- `TOOL_NAMES` entries for the retired `save_session_bookmark`, `restore_session_bookmark`, `save_session_note` and `recall_session_notes`, and the `backfill:projects` script.
+
 ## [5.5.2] - Search Match Scores - 2026-10-22
 
 `search_codebase` returns every match's scores as JSON.
