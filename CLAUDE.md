@@ -120,7 +120,7 @@ If upgrading from a version without multi-project support, note these breaking c
 | `swarm_message` | Direct agent-to-agent messaging |
 | `session_save` | Save a note or bookmark in any project (unified) |
 | `session_recall` | Recall notes and bookmarks from one or more projects (unified) |
-| `session_update` | Revise a saved note in place |
+| `session_update` | Revise a saved note in place, or move it to another project with `moveToProjectId` |
 | `query_signals` | One call across code, notes and pheromones |
 | `query_signals_outcome` | Record which query_signals results you cited |
 | `cleanup_session` | Remove expired session data |
@@ -175,6 +175,8 @@ traverse_from_node({ projectId: "...", nodeId: "...", displayOptions: { includeC
 
 Local BGE-base embeddings are the default. No API key is needed. The sidecar runs a Python
 model that starts automatically on first use.
+
+The sidecar virtualenv lives at `$CGC_DATA_DIR/sidecar-venv` (default `~/.local/share/code-graph-context/sidecar-venv`), not in the package, so `npm i -g` keeps it. Python is chosen in this order: `PYTHON_EXECUTABLE`, that venv, a legacy `sidecar/.venv` in the package, system python. `init` moves a legacy venv to the new path with a rename and builds a fresh one when the rename fails.
 
 | Env Variable | Default | Description |
 |---|---|---|

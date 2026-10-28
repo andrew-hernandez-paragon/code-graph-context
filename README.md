@@ -107,6 +107,7 @@ code-graph-context init  # Sets up Neo4j + Python sidecar + downloads embedding 
 
 The `init` command handles everything:
 - Sets up Neo4j: on macOS with Homebrew it installs `neo4j` if missing and runs it as a launchd agent (`dev.code-graph-context.neo4j`) with its own config, plugins and data under `~/.local/share/code-graph-context/neo4j`, so `brew upgrade` never touches them; elsewhere it starts a Docker container. Force a provider with `--native` or `--docker`.
+- Creates the sidecar's Python virtualenv at `~/.local/share/code-graph-context/sidecar-venv`, outside the installed package, so `npm i -g` upgrades keep it. A virtualenv left in the package's `sidecar/.venv` by an earlier release is moved there when both are on the same filesystem; otherwise `init` says so and builds a new one. `CGC_DATA_DIR` changes the directory.
 - Records the provider in `~/.config/code-graph-context/config.json`, so the MCP server knows what to start
 - Creates a Python virtual environment
 - Installs embedding dependencies (PyTorch, sentence-transformers)
@@ -193,6 +194,8 @@ If you prefer to edit the config files directly:
 | `EMBEDDING_MODEL` | No | `BAAI/bge-base-en-v1.5` | Local embedding model (see [Embedding Configuration](#embedding-configuration)) |
 | `EMBEDDING_BATCH_SIZE` | No | `8` | Texts per embedding batch (lower = less memory, higher = faster) |
 | `EMBEDDING_SIDECAR_PORT` | No | `8787` | Port for local embedding server |
+| `PYTHON_EXECUTABLE` | No | sidecar venv, then `sidecar/.venv`, then `python3` | Python used to run the embedding sidecar |
+| `CGC_DATA_DIR` | No | `~/.local/share/code-graph-context` | Holds the sidecar virtualenv (`sidecar-venv`) |
 | `EMBEDDING_DEVICE` | No | auto (`mps`/`cpu`) | Device for embeddings. Auto-detects MPS on Apple Silicon |
 | `EMBEDDING_HALF_PRECISION` | No | `false` | Set `true` for float16 (uses ~0.5x memory) |
 | `OPENAI_EMBEDDINGS_ENABLED` | No | `false` | Use OpenAI only when `true` and a nonempty API key is set |
@@ -450,7 +453,7 @@ See [`skills/swarm/SKILL.md`](skills/swarm/SKILL.md) for the full documentation.
 | **Memory** | |
 | `session_save` | Save a note or bookmark in any project |
 | `session_recall` | Recall notes and bookmarks from one or more projects |
-| `session_update` | Revise a saved note in place |
+| `session_update` | Revise a saved note in place, or move it to another project with `moveToProjectId` |
 | `cleanup_session` | Delete expired notes and old bookmarks |
 | `query_signals` | One call across code, notes and pheromones |
 | **Utility** | |
@@ -678,6 +681,7 @@ parse_typescript_project({
 code-graph-context init [options]   # Set up Neo4j + Python sidecar + embedding model
 code-graph-context status           # Check provider, Neo4j and sidecar status
 code-graph-context stop             # Stop Neo4j (launchd service or container)
+code-graph-context project delete <project> [options]   # Delete a project and its graph data
 ```
 
 **Init options:**
@@ -688,6 +692,19 @@ code-graph-context stop             # Stop Neo4j (launchd service or container)
 - `--native` / `--docker` - Choose the provider (default: native on macOS with Homebrew, otherwise Docker)
 - `--pagecache <size>` - Page cache size (default: 1G)
 - `-f, --force` - Recreate the container, or regenerate native config and restart (data is kept)
+
+**Deleting a project** (CLI only, never an MCP tool):
+
+```bash
+code-graph-context project delete <project> [--move-memory-to <project>] [--delete-memory] [--dry-run] [--yes]
+```
+
+`<project>` is an id, name or path. The command refuses when the project holds notes, note chunks or bookmarks and neither memory flag is given, and prints the counts. `--dry-run` prints per-label counts of what would move and be deleted and writes nothing. Without `--yes` it asks for confirmation.
+- `--move-memory-to <project>` moves the notes, chunks and bookmarks to that project or collection. `aboutNodeIds` and `workingSetNodeIds` that point into the deleted project are removed because they can never resolve; `aboutPaths` stay. Deliberations scoped to the project are re-scoped to the target.
+- `--delete-memory` deletes the memory with the project. Deliberations are kept, with the deleted id removed from their `projectIds`.
+- Every other node with the project's id (code, swarm tasks, messages, pheromones) is deleted in batches, then the Project. A run that stopped part way is finished by running the command again.
+
+To move one note instead, call `session_update` with `moveToProjectId` (an id, name or path). The note and its chunks move; its anchors stay as they are. Moving a note to its current project does nothing.
 
 If a Docker graph named `code-graph-neo4j` is already running on the same ports, native `init` configures but does not start Neo4j; it points to `code-graph-context migrate-from-docker`. That command moves the graph with every node, embedding and index, upgrading the store through Neo4j 5.26 on the way, and leaves the Docker container and volume stopped but intact; `code-graph-context migrate-from-docker --rollback` returns to them. Do not also run `brew services start neo4j`: it starts a second Neo4j without this config.
 

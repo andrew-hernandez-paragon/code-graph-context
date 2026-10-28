@@ -42,22 +42,10 @@ Plan and measurements: `~/develop/docs/code-graph-context/plans/memory-scopes/` 
 - **Problem:** Scores are Neo4j's `(1 + cosine) / 2`, and with `BAAI/bge-base-en-v1.5` they sit in a narrow band: nonsense queries score 0.73 to 0.80, real matches 0.80 to 0.88. No threshold filters anything, so recall always returns `limit` notes and pads with weak ones. Seen live: a Kafka query on code-graph-context (no Kafka notes) returned five notes at 0.77 to 0.79.
 - **Fix:** Build a small labeled set of relevant and irrelevant (query, note) pairs per project, measure cosine distributions, and calibrate a default per embedding model; consider thresholding on raw cosine and reporting it.
 
-### 7. A project embedded with another model is invisible to vector search
-- **Problem:** `cursordiff-orchestrator` (`proj_d7b9bff20766`, 280 code nodes) holds 1024-dimension CodeSage vectors, so they are not in the 768-dimension index and its code search returns nothing, with no error.
-- **Fix:** Reparse or delete that project. Then stamp `embeddingModel` and dimensions on each Project and have `list_projects` and the code tools warn when they differ from the configured model.
-
 ### 8. One filtered search per project until Neo4j 2026.06
 - **File:** `src/storage/neo4j/project-vector-search.ts`
 - **Problem:** Neo4j 2026.02 rejects `IN` and `OR` inside a vector `SEARCH` filter, so several projects need `UNWIND ... CALL (scopeId) { SEARCH ... }`.
 - **Fix:** After upgrading to 2026.06 or later, which allows `IN`, collapse it into one search; the change stays inside this module.
-
-### 9. Project and note maintenance the tools cannot do yet
-- Move a note to another project, delete a project, edit a project's description or name.
-- Delete expired notes on a schedule (they are hidden but stay in the index's candidate pools).
-
-### 10. The sidecar virtualenv lives inside the installed package
-- **Problem:** `npm i -g` replaces the package directory and its `sidecar/.venv` (1.1 GB with torch); the rebuild outlasts `EMBEDDING_STARTUP_TIMEOUT_MS` and the first parse after an upgrade fails.
-- **Fix:** Keep the venv under a stable path such as `~/.config/code-graph-context/venv`.
 
 ### 11. Ingest dry runs now need Neo4j
 - **Files:** `src/cli/ingest-cursordiff.ts`, the one-shot ingest tools, `src/mcp/services/cursordiff-watch-manager.ts`
@@ -74,12 +62,17 @@ Plan and measurements: `~/develop/docs/code-graph-context/plans/memory-scopes/` 
 - **Problem:** Each tool is an MCP adapter and a workflow in one function, so the order of steps and who owns each one is hard to read, and rows are untyped.
 - **Fix:** A `SessionRecallService` and `SessionSaveService` that return typed results, with the tools as thin adapters; type the Neo4j rows.
 
-### 14. Chunk-index fallback decided by error text
-- **File:** `src/mcp/tools/session-recall.tool.ts` `searchSessionNotes`
-- **Problem:** It falls back to parent-only search by matching the error message for a missing `session_note_chunks_idx`.
-- **Fix:** Check for the index once (the startup rebuild already lists vector indexes) and choose the query up front.
-
 ### 15. Runbench treats a Project without `kind` as a codebase
 - **Files:** `~/coding/runbench/packages/hub/src/graph-client.ts`, `packages/orchestrator/src/graph-projects.ts`
 - **Problem:** The server computes a missing kind with `projectKindCypher` (a path with no parse status is a `directory`); Runbench defaults to `codebase`. They differ only for nodes a pre-5.6 server wrote and the startup backfill has not yet reached.
 - **Fix:** Use the same rule, or read `list_projects` instead of Cypher.
+
+### 16. Incremental parse can mix embedding models under one stamp
+- **File:** `src/mcp/handlers/incremental-parse.handler.ts`
+- **Problem:** A watcher re-parse embeds changed nodes with the configured model and leaves the project's `embeddingModel` stamp alone, so a project parsed with one model and edited under another holds mixed vectors while its stamp names the old model.
+- **Fix:** Compare the configured model with the stamp before an incremental parse; refuse with a message to re-parse fully, or re-stamp after a full re-embed.
+
+### 17. Two data-directory overrides
+- **Files:** `src/cli/neo4j-native.ts` (`CGC_NEO4J_HOME`), `src/core/utils/data-directory.ts` (`CGC_DATA_DIR`)
+- **Problem:** Native Neo4j reads its own override, so the two can point at different roots.
+- **Fix:** Derive the Neo4j home from `CGC_DATA_DIR` by default and keep `CGC_NEO4J_HOME` only as an explicit override.
