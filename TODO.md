@@ -37,16 +37,6 @@
 
 Plan and measurements: `~/develop/docs/code-graph-context/plans/memory-scopes/` (proposal.md, run-log.md).
 
-### 6. Similarity scores cannot separate relevant from nearest
-- **Files:** `src/mcp/tools/session-recall.tool.ts` (`minSimilarity` default 0.3), `src/mcp/tools/search-codebase.tool.ts` (`DEFAULTS.searchMinSimilarity` 0.5)
-- **Problem:** Scores are Neo4j's `(1 + cosine) / 2`, and with `BAAI/bge-base-en-v1.5` they sit in a narrow band: nonsense queries score 0.73 to 0.80, real matches 0.80 to 0.88. No threshold filters anything, so recall always returns `limit` notes and pads with weak ones. Seen live: a Kafka query on code-graph-context (no Kafka notes) returned five notes at 0.77 to 0.79.
-- **Fix:** Build a small labeled set of relevant and irrelevant (query, note) pairs per project, measure cosine distributions, and calibrate a default per embedding model; consider thresholding on raw cosine and reporting it.
-
-### 8. One filtered search per project until Neo4j 2026.06
-- **File:** `src/storage/neo4j/project-vector-search.ts`
-- **Problem:** Neo4j 2026.02 rejects `IN` and `OR` inside a vector `SEARCH` filter, so several projects need `UNWIND ... CALL (scopeId) { SEARCH ... }`.
-- **Fix:** After upgrading to 2026.06 or later, which allows `IN`, collapse it into one search; the change stays inside this module.
-
 ### 11. Ingest dry runs now need Neo4j
 - **Files:** `src/cli/ingest-cursordiff.ts`, the one-shot ingest tools, `src/mcp/services/cursordiff-watch-manager.ts`
 - **Problem:** Mapping cwd roots to registered project ids and counting unknown deliberation ids read the store, so `dryRun` no longer works offline.
@@ -76,3 +66,13 @@ Plan and measurements: `~/develop/docs/code-graph-context/plans/memory-scopes/` 
 - **Files:** `src/cli/neo4j-native.ts` (`CGC_NEO4J_HOME`), `src/core/utils/data-directory.ts` (`CGC_DATA_DIR`)
 - **Problem:** Native Neo4j reads its own override, so the two can point at different roots.
 - **Fix:** Derive the Neo4j home from `CGC_DATA_DIR` by default and keep `CGC_NEO4J_HOME` only as an explicit override.
+
+### 18. Note recall needs a second signal beyond embeddings
+- **Files:** `src/mcp/tools/session-recall.tool.ts`, `src/mcp/handlers/session-note-query-clauses.ts`, `src/storage/neo4j/vector-indexes.ts`
+- **Evidence:** `~/develop/docs/code-graph-context/research/recall-relevance-calibration.md`. On 812 blind-labeled pairs, embedding similarity separates relevant from irrelevant notes at ROC AUC 0.815; the calibrated floor (5.7.1) lifts precision only from 0.31 to 0.39. 8 of 48 real queries had no relevant note and still receive weak matches.
+- **Fix:** A full-text index on note topic and content fused with the vector channel by reciprocal rank (as `search_codebase` already does), then a cross-encoder reranker over the top 20. Measure each against the labels in `~/develop/data/code-graph-context/recall-eval/`.
+
+### 19. Runbench's primer floor was not calibrated
+- **File:** `~/coding/runbench/packages/orchestrator/src/learnings-primer.ts` (`MIN_COSINE = 0.55`)
+- **Problem:** The 0.60 calibration used agent recall queries; the primer queries with ticket text, a different distribution.
+- **Fix:** Label a sample of primer queries the same way and set its floor from them.
