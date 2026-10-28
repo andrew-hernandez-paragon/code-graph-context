@@ -232,6 +232,8 @@ describe('ProjectService registration', () => {
           status: null,
           nodeCount: null,
           edgeCount: null,
+          embeddingModel: null,
+          embeddingDimensions: null,
           updatedAt: null,
           memory: { liveNotes: 2, bookmarks: 1, lastSavedAt: '2023-11-14T22:21:40.000Z' },
         },

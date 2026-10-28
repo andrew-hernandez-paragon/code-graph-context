@@ -39,7 +39,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
-import { ProjectService } from '../../core/projects/index.js';
+import { embeddingWarnings, ProjectService, type Project } from '../../core/projects/index.js';
 import { toNumberOrNull } from '../../core/utils/shared-utils.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import {
@@ -310,6 +310,8 @@ export interface QuerySignalsBySourceResponse {
   stats: Stats;
   unresolvedProjectIds?: string[];
   unresolvedProjectErrors?: string[];
+  /** Resolved projects whose code embeddings differ from the configured model. */
+  warnings?: string[];
 }
 
 export interface QuerySignalsByProjectResponse {
@@ -320,6 +322,8 @@ export interface QuerySignalsByProjectResponse {
   stats: Stats;
   unresolvedProjectIds?: string[];
   unresolvedProjectErrors?: string[];
+  /** Resolved projects whose code embeddings differ from the configured model. */
+  warnings?: string[];
 }
 
 export type QuerySignalsResponse = QuerySignalsBySourceResponse | QuerySignalsByProjectResponse;
@@ -636,12 +640,12 @@ export const createQuerySignalsTool = (server: McpServer): void => {
         const projectService = new ProjectService(neo4jService);
         const outcomes = await Promise.allSettled(rawIds.map((pid) => projectService.findProject(pid)));
 
-        const resolvedProjectIds = new Set<string>();
+        const resolvedProjects = new Map<string, Project>();
         const unresolvedProjectIds: string[] = [];
         const unresolvedProjectErrors: string[] = [];
         outcomes.forEach((outcome, index) => {
           if (outcome.status === 'fulfilled') {
-            resolvedProjectIds.add(outcome.value.projectId);
+            resolvedProjects.set(outcome.value.projectId, outcome.value);
           } else {
             // The message names the next call (for example list_projects), so it is kept whole.
             unresolvedProjectIds.push(rawIds[index]);
@@ -651,7 +655,7 @@ export const createQuerySignalsTool = (server: McpServer): void => {
           }
         });
 
-        if (resolvedProjectIds.size === 0) {
+        if (resolvedProjects.size === 0) {
           return createErrorResponse(
             `No resolvable projectIds. Unresolved: ${unresolvedProjectIds.join(', ')}. ${unresolvedProjectErrors.join(' | ')}`,
           );
@@ -660,7 +664,7 @@ export const createQuerySignalsTool = (server: McpServer): void => {
         const concurrency = makeSemaphore(8);
         const response = await concurrency(() =>
           runQuerySignals(neo4jService, {
-            projectIds: [...resolvedProjectIds],
+            projectIds: [...resolvedProjects.keys()],
             query: input.query,
             sources: input.sources as Source[] | undefined,
             limitPerSource: input.limitPerSource,
@@ -675,6 +679,10 @@ export const createQuerySignalsTool = (server: McpServer): void => {
         if (unresolvedProjectIds.length > 0) {
           payload.unresolvedProjectIds = unresolvedProjectIds;
           payload.unresolvedProjectErrors = unresolvedProjectErrors;
+        }
+        if ((input.sources ?? ['code']).includes('code')) {
+          const warnings = embeddingWarnings([...resolvedProjects.values()]);
+          if (warnings.length > 0) payload.warnings = warnings;
         }
 
         return createSuccessResponse(JSON.stringify(payload, null, 2));

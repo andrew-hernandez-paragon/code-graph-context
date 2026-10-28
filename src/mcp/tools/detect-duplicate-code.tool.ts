@@ -6,6 +6,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+import { embeddingWarnings } from '../../core/projects/index.js';
 import {
   toNumber,
   isUIComponent,
@@ -210,6 +211,7 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
         const projectResult = await resolveSoleCodebaseOrError(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
         const resolvedProjectId = projectResult.project.projectId;
+        const warnings = type === 'structural' ? [] : embeddingWarnings([projectResult.project]);
 
         const coreTypes = getScopeFilter(scope as Scope);
         const duplicateGroups: DuplicateGroup[] = [];
@@ -456,6 +458,7 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
             semanticDiagnostic
               ? `Semantic analysis note: ${semanticDiagnostic}. Try lowering minSimilarity or changing scope.`
               : 'Try lowering minSimilarity or broadening scope.',
+            warnings,
           );
         }
 
@@ -519,6 +522,10 @@ export const createDetectDuplicateCodeTool = (server: McpServer): void => {
         // Add pre-computed diagnostic to result
         if (semanticDiagnostic) {
           result.semanticDiagnostic = semanticDiagnostic;
+        }
+
+        if (warnings.length > 0) {
+          result.warnings = warnings;
         }
 
         return createSuccessResponse(JSON.stringify(result, null, 2));

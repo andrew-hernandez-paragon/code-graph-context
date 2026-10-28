@@ -28,6 +28,7 @@ vi.mock('../../core/projects/index.js', () => ({
   ProjectService: class {
     list = vi.fn(async () => []);
     backfillKinds = vi.fn(async () => 0);
+    backfillEmbeddingStamps = vi.fn(async () => 0);
   },
 }));
 vi.mock('../neo4j-startup.js', () => ({

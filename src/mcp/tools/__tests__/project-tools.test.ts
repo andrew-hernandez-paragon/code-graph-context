@@ -89,6 +89,8 @@ describe('list_projects', () => {
         kind: 'codebase',
         path: '/work/agent-os',
         status: 'complete',
+        embeddingModel: 'BAAI/bge-base-en-v1.5',
+        embeddingDimensions: 768,
       },
       { projectId: 'proj_on-call', name: 'on-call', kind: 'collection', description: 'runbooks' },
     ]).run;
@@ -105,6 +107,13 @@ describe('list_projects', () => {
       description: 'runbooks',
       memory: { liveNotes: 2, bookmarks: 1, lastSavedAt: '2023-11-14T22:21:40.000Z' },
     });
+  });
+
+  it('shows the embedding model and dimensions of a codebase, and null for a project without a stamp', async () => {
+    const { projects } = JSON.parse(textOf(await handlerOf(createListProjectsTool)({})));
+
+    expect(projects[0]).toMatchObject({ embeddingModel: 'BAAI/bge-base-en-v1.5', embeddingDimensions: 768 });
+    expect(projects[1]).toMatchObject({ embeddingModel: null, embeddingDimensions: null });
   });
 
   it('filters by kind', async () => {

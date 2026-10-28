@@ -8,6 +8,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
+import { embeddingWarnings } from '../../core/projects/index.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, DEFAULTS, PROJECT_ID_DESCRIPTION } from '../constants.js';
 import { searchCodeHybrid, type FusedSearchRow } from '../handlers/query-signals.handler.js';
@@ -19,6 +20,7 @@ import {
   debugLog,
   sanitizeNumericInput,
   findCodebaseOrError,
+  withWarnings,
 } from '../utils.js';
 
 /**
@@ -99,6 +101,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
         const projectResult = await findCodebaseOrError(projectId, neo4jService);
         if (!projectResult.success) return projectResult.error;
         const resolvedProjectId = projectResult.project.projectId;
+        const warnings = embeddingWarnings([projectResult.project]);
 
         // Sanitize numeric inputs to ensure integers (Neo4j LIMIT requires integers)
         const sanitizedMaxDepth = sanitizeNumericInput(maxDepth, DEFAULTS.traversalDepth, 10);
@@ -129,6 +132,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
           return createEmptyResponse(
             `No code matched, by embedding similarity >= ${minSimilarity} or by keyword`,
             'Try rephrasing your query or lowering minSimilarity.',
+            warnings,
           );
         }
 
@@ -153,7 +157,7 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
 
         const first = traversalResult.content?.[0];
         if (first?.type === 'text') {
-          first.text = withSearchMatches(first.text, matches);
+          first.text = withWarnings(withSearchMatches(first.text, matches), warnings);
         }
 
         return traversalResult;

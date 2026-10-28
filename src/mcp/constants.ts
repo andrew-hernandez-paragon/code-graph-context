@@ -264,7 +264,7 @@ Each note reports staleAboutNodeIds, missingAboutPaths and changedAboutPaths whe
   },
   [TOOL_NAMES.sessionUpdate]: {
     title: 'Session Update',
-    description: `Revises a saved note in place: fix a typo, change severity or category, correct content, replace its aboutNodeIds or aboutPaths, or mark it superseded. Every update refreshes the note's lastValidated time. For a substantive change or a reversed decision, use session_save with supersedes: [<oldId>] instead, which keeps the old note as history. Find note ids with session_recall.`,
+    description: `Revises a saved note in place: fix a typo, change severity or category, correct content, replace its aboutNodeIds or aboutPaths, mark it superseded, or move it to another project or collection with moveToProjectId. Every update refreshes the note's lastValidated time. For a substantive change or a reversed decision, use session_save with supersedes: [<oldId>] instead, which keeps the old note as history. Find note ids with session_recall.`,
     annotations: REPLACES_IDEMPOTENT,
   },
   [TOOL_NAMES.swarmMessage]: {

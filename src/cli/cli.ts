@@ -6,21 +6,26 @@
  */
 
 import { execSync, spawn as spawnProcess } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, renameSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { Command } from 'commander';
 
 import { getLocalEmbeddingModel } from '../core/embeddings/embedding-config.js';
+import { LEGACY_SIDECAR_VENV_DIR } from '../core/embeddings/embedding-server-launch.js';
+import { resolveSidecarVenvDir, venvPythonPath } from '../core/embeddings/sidecar-venv.js';
+import { ProjectDeletionService, ProjectService } from '../core/projects/index.js';
+import { resolveDataDirectory } from '../core/utils/data-directory.js';
 import { readPackageVersion } from '../core/utils/package-version.js';
 import { Neo4jConnection, getNeo4jConnection } from '../storage/neo4j/neo4j-connection.js';
 import { parseNeo4jVersion, supportsProjectFilteredSearch } from '../storage/neo4j/neo4j-version.js';
+import { Neo4jService } from '../storage/neo4j/neo4j.service.js';
 
 import { ProcessCommandRunner } from './command-runner.js';
 import { runEmbeddingsStart } from './embeddings-start.js';
 import { Neo4jBoltClient, NodeMigrationFileSystem, SystemClock } from './migrate-from-docker-adapters.js';
-import { MigrateFromDockerOptions, resolveDataDirectory, runMigrateFromDocker } from './migrate-from-docker.js';
+import { MigrateFromDockerOptions, runMigrateFromDocker } from './migrate-from-docker.js';
 import { createMigrationEnvironment } from './migration-environment.js';
 import { isApocAvailable, probeBolt, queryBolt, waitForApoc, waitForBolt } from './neo4j-bolt.js';
 import {
@@ -38,6 +43,7 @@ import {
 } from './neo4j-docker.js';
 import { NativeNeo4jProvider, createNativeNeo4jProvider } from './neo4j-native.js';
 import { Neo4jProviderName, readProviderRecord, writeProviderRecord } from './neo4j-provider-record.js';
+import { ProjectDeleteOptions, confirmOnTerminal, runProjectDelete } from './project-delete.js';
 import { selectNeo4jProvider } from './select-neo4j-provider.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -136,20 +142,12 @@ ${c.bold}Next steps:${c.reset}
 const getSidecarDir = (): string => join(__dirname, '..', '..', 'sidecar');
 
 /**
- * Get the path to the venv python binary inside the sidecar dir.
- * Returns null if the venv doesn't exist yet.
- */
-const getVenvPython = (sidecarDir: string): string | null => {
-  const venvPython = join(sidecarDir, '.venv', 'bin', 'python3');
-  return existsSync(venvPython) ? venvPython : null;
-};
-
-/**
  * Get the best python binary to use for the sidecar.
- * Prefers venv python, falls back to system python3.
+ * Prefers the venv python, falls back to system python3.
  */
-const getSidecarPython = (sidecarDir: string): string => {
-  return getVenvPython(sidecarDir) ?? 'python3';
+const getSidecarPython = (): string => {
+  const venvPython = venvPythonPath(resolveSidecarVenvDir(process.env), process.platform);
+  return existsSync(venvPython) ? venvPython : 'python3';
 };
 
 /**
@@ -176,12 +174,12 @@ const checkPipPackage = (pkg: string, python: string = 'python3'): boolean => {
 };
 
 /**
- * Create a venv in the sidecar directory
+ * Create the sidecar venv in the data directory
  */
-const createVenv = (sidecarDir: string): boolean => {
+const createVenv = (venvPath: string): boolean => {
   try {
-    const venvPath = join(sidecarDir, '.venv');
-    execSync(`python3 -m venv ${venvPath}`, { stdio: ['pipe', 'pipe', 'pipe'] });
+    mkdirSync(dirname(venvPath), { recursive: true });
+    execSync(`python3 -m venv "${venvPath}"`, { stdio: ['pipe', 'pipe', 'pipe'] });
     return true;
   } catch {
     return false;
@@ -193,9 +191,9 @@ const createVenv = (sidecarDir: string): boolean => {
  */
 const installSidecarDeps = (sidecarDir: string): Promise<boolean> => {
   return new Promise((resolve) => {
-    const venvPip = join(sidecarDir, '.venv', 'bin', 'pip');
     const requirementsPath = join(sidecarDir, 'requirements.txt');
-    const pip = spawnProcess(venvPip, ['install', '-r', requirementsPath], {
+    // `python -m pip`, because a moved venv keeps absolute shebangs in bin/pip pointing at the old path.
+    const pip = spawnProcess(getSidecarPython(), ['-m', 'pip', 'install', '-r', requirementsPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -222,7 +220,7 @@ const installSidecarDeps = (sidecarDir: string): Promise<boolean> => {
  */
 const verifySidecar = (sidecarDir: string): Promise<boolean> => {
   return new Promise((resolve) => {
-    const python = getSidecarPython(sidecarDir);
+    const python = getSidecarPython();
     const test = spawnProcess(
       python,
       [
@@ -240,6 +238,25 @@ const verifySidecar = (sidecarDir: string): Promise<boolean> => {
     test.on('close', (code) => resolve(code === 0 && stdout.includes('ok')));
     test.on('error', () => resolve(false));
   });
+};
+
+/**
+ * Move a venv left inside the package by an earlier release to the data directory.
+ * A rename only works within one filesystem; otherwise init builds a fresh venv.
+ */
+const moveLegacyVenv = (venvPath: string): void => {
+  if (existsSync(venvPath) || !existsSync(LEGACY_SIDECAR_VENV_DIR)) return;
+  try {
+    mkdirSync(dirname(venvPath), { recursive: true });
+    renameSync(LEGACY_SIDECAR_VENV_DIR, venvPath);
+    log(
+      sym.ok,
+      `Moved the virtual environment from ${c.dim}${LEGACY_SIDECAR_VENV_DIR}${c.reset} to ${c.dim}${venvPath}${c.reset}`,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    log(sym.warn, `Could not move the legacy virtual environment (${reason}); creating a new one`);
+  }
 };
 
 /**
@@ -262,21 +279,22 @@ const setupSidecar = async (): Promise<void> => {
   log(sym.ok, `${pythonVersion}`);
 
   // Create or reuse venv
-  const venvPath = join(sidecarDir, '.venv');
+  const venvPath = resolveSidecarVenvDir(process.env);
+  moveLegacyVenv(venvPath);
   if (existsSync(venvPath)) {
-    log(sym.ok, `Virtual environment exists (${c.dim}sidecar/.venv${c.reset})`);
+    log(sym.ok, `Virtual environment exists (${c.dim}${venvPath}${c.reset})`);
   } else {
     const venvSpinner = spinner('Creating virtual environment...');
-    const created = createVenv(sidecarDir);
+    const created = createVenv(venvPath);
     if (!created) {
       venvSpinner.stop(false, 'Failed to create virtual environment');
       console.log(`\n  Try manually: ${c.dim}python3 -m venv ${venvPath}${c.reset}\n`);
       return;
     }
-    venvSpinner.stop(true, `Virtual environment created (${c.dim}sidecar/.venv${c.reset})`);
+    venvSpinner.stop(true, `Virtual environment created (${c.dim}${venvPath}${c.reset})`);
   }
 
-  const python = getSidecarPython(sidecarDir);
+  const python = getSidecarPython();
 
   // Check if deps already installed in venv
   const hasSentenceTransformers = checkPipPackage('sentence_transformers', python);
@@ -297,7 +315,7 @@ const setupSidecar = async (): Promise<void> => {
     if (!installed) {
       s.stop(false, 'Failed to install Python dependencies');
       console.log(
-        `\n  Try manually: ${c.dim}${join(venvPath, 'bin', 'pip')} install -r ${join(sidecarDir, 'requirements.txt')}${c.reset}\n`,
+        `\n  Try manually: ${c.dim}${venvPythonPath(venvPath, process.platform)} -m pip install -r ${join(sidecarDir, 'requirements.txt')}${c.reset}\n`,
       );
       return;
     }
@@ -664,12 +682,11 @@ const printSidecarStatus = (): void => {
   log(pythonVersion ? sym.ok : sym.warn, `Python: ${pythonVersion ?? 'not found'}`);
 
   if (pythonVersion) {
-    const sidecarDir = getSidecarDir();
-    const venvExists = existsSync(join(sidecarDir, '.venv'));
+    const venvExists = existsSync(venvPythonPath(resolveSidecarVenvDir(process.env), process.platform));
     log(venvExists ? sym.ok : sym.warn, `Sidecar venv: ${venvExists ? 'exists' : 'not created'}`);
 
     if (venvExists) {
-      const python = getSidecarPython(sidecarDir);
+      const python = getSidecarPython();
       const hasDeps =
         checkPipPackage('sentence_transformers', python) &&
         checkPipPackage('fastapi', python) &&
@@ -869,8 +886,31 @@ program
     );
   });
 
+const project = program.command('project').description('Manage registered projects');
+
+project
+  .command('delete <project>')
+  .description('Delete a project (id, name or path) and its graph data; its memory must be moved or deleted explicitly')
+  .option('--move-memory-to <project>', 'Move its notes, chunks and bookmarks to this project or collection')
+  .option('--delete-memory', 'Delete its notes, chunks and bookmarks with the project')
+  .option('--dry-run', 'Print what would move and what would be deleted, and write nothing')
+  .option('-y, --yes', 'Do not ask for confirmation')
+  .action(async (projectInput: string, options: ProjectDeleteOptions) => {
+    const neo4j = new Neo4jService();
+    try {
+      process.exitCode = await runProjectDelete(projectInput, options, {
+        deletion: new ProjectDeletionService(new ProjectService(neo4j), neo4j),
+        confirm: confirmOnTerminal,
+        writeStdout: (line) => console.log(line),
+        writeStderr: (line) => console.error(line),
+      });
+    } finally {
+      await neo4j.close();
+    }
+  });
+
 // Default action: start MCP server if no command given
-const knownCommands = ['init', 'status', 'stop', 'embeddings', 'migrate-from-docker', 'help'];
+const knownCommands = ['init', 'status', 'stop', 'embeddings', 'migrate-from-docker', 'project', 'help'];
 const args = process.argv.slice(2);
 const hasCommand = args.some((arg) => knownCommands.includes(arg) || arg.startsWith('-'));
 

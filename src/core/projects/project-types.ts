@@ -9,6 +9,9 @@ export interface Project {
   status: ParseStatus | null;
   nodeCount: number | null;
   edgeCount: number | null;
+  /** The model and vector size that embedded a codebase; null until stamped, or when unknown. */
+  embeddingModel: string | null;
+  embeddingDimensions: number | null;
   updatedAt: string | null;
 }
 

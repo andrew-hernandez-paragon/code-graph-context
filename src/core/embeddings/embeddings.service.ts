@@ -8,9 +8,9 @@
  *   default                         → Local Python sidecar with BGE-base (768 dimensions)
  */
 
+import { getEmbeddingDimensions, getEmbeddingModel, isOpenAIEnabled } from './embedding-config.js';
 import { LocalEmbeddingsService } from './local-embeddings.service.js';
 import { OpenAIEmbeddingsService } from './openai-embeddings.service.js';
-import { getEmbeddingModel, isOpenAIEnabled } from './embedding-config.js';
 
 export {
   EMBEDDING_DIMENSIONS,
@@ -43,10 +43,12 @@ export class EmbeddingsService implements IEmbeddingsService {
   private readonly impl: IEmbeddingsService;
   readonly provider: 'local' | 'openai';
   readonly model: string;
+  readonly dimensions: number;
 
   constructor(model?: string) {
     this.provider = isOpenAIEnabled() ? 'openai' : 'local';
     this.model = this.provider === 'openai' ? (model ?? getEmbeddingModel()) : getEmbeddingModel();
+    this.dimensions = getEmbeddingDimensions();
     if (this.provider === 'openai') {
       this.impl = new OpenAIEmbeddingsService(this.model);
     } else {

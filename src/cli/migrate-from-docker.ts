@@ -7,7 +7,6 @@
  * The source container and its volume are only ever stopped, never deleted.
  */
 
-import { homedir } from 'os';
 import { basename, dirname, join } from 'path';
 
 import { Neo4jConnection } from '../storage/neo4j/neo4j-connection.js';
@@ -135,9 +134,6 @@ const TOTAL_STEPS = 9;
 const ROLLBACK_STEPS = 5;
 
 class MigrationError extends Error {}
-
-export const resolveDataDirectory = (env: NodeJS.ProcessEnv): string =>
-  env.CGC_DATA_DIR ?? join(homedir(), '.local/share/code-graph-context');
 
 export const parseNeoVersion = (text: string): NeoVersion | null => {
   const match = /(\d+)\.(\d+)/.exec(text);

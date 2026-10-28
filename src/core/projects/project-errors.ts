@@ -12,3 +12,5 @@ export class AmbiguousProjectError extends ProjectError {}
 export class NotACodebaseError extends ProjectError {}
 
 export class InvalidProjectInputError extends ProjectError {}
+
+export class ProjectDeletionRefusedError extends ProjectError {}

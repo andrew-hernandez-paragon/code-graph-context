@@ -32,7 +32,8 @@ const KIND_CYPHER = projectKindCypher('p');
 const PROJECT_FIELDS = `
   p.projectId AS projectId, p.name AS name, ${KIND_CYPHER} AS kind, p.path AS path,
   p.description AS description, p.status AS status, p.nodeCount AS nodeCount,
-  p.edgeCount AS edgeCount, p.updatedAt AS updatedAt`;
+  p.edgeCount AS edgeCount, p.embeddingModel AS embeddingModel,
+  p.embeddingDimensions AS embeddingDimensions, p.updatedAt AS updatedAt`;
 
 export const FIND_BY_ID_QUERY = `
   MATCH (p:Project {projectId: $projectId})
@@ -125,8 +126,35 @@ const UPDATE_PARSE_STATUS_QUERY = `
   SET p.status = $status,
       p.nodeCount = $nodeCount,
       p.edgeCount = $edgeCount,
+      p.embeddingModel = coalesce($embeddingModel, p.embeddingModel),
+      p.embeddingDimensions = coalesce(toInteger($embeddingDimensions), p.embeddingDimensions),
       p.updatedAt = datetime()
   RETURN p.projectId AS projectId
+`;
+
+/** Reads one embedded node's vector size and model; shared so the integration test runs the same sample. */
+export const SAMPLE_EMBEDDED_NODE_CYPHER = `
+  CALL (p) {
+    MATCH (n:Embedded {projectId: p.projectId})
+    WHERE n.embedding IS NOT NULL
+    RETURN size(n.embedding) AS dimensions, n.embeddingModel AS model
+    LIMIT 1
+  }`;
+
+/** Codebases with no stamp, and what one of their embedded nodes says; a second start selects none of the stamped ones. */
+export const SELECT_UNSTAMPED_CODEBASES_QUERY = `
+  MATCH (p:Project)
+  WHERE ${KIND_CYPHER} = 'codebase' AND p.embeddingDimensions IS NULL
+  ${SAMPLE_EMBEDDED_NODE_CYPHER}
+  RETURN p.projectId AS projectId, dimensions, model
+`;
+
+const STAMP_EMBEDDINGS_QUERY = `
+  UNWIND $stamps AS stamp
+  MATCH (p:Project {projectId: stamp.projectId})
+  WHERE p.embeddingDimensions IS NULL
+  SET p.embeddingDimensions = toInteger(stamp.dimensions), p.embeddingModel = stamp.model
+  RETURN count(p) AS stamped
 `;
 
 /** Selects only nodes without `kind`, so a second start writes nothing. */
@@ -136,6 +164,12 @@ export const BACKFILL_PROJECT_KINDS_QUERY = `
   SET p.kind = ${KIND_CYPHER}
   REMOVE p.synthetic
   RETURN count(p) AS backfilled
+`;
+
+/** Detaches the Project node last; the caller has already removed everything that carries its id. */
+export const DELETE_PROJECT_QUERY = `
+  MATCH (p:Project {projectId: $projectId})
+  DETACH DELETE p
 `;
 
 const trimmedOrNull = (value: string | undefined): string | null => {
@@ -153,6 +187,8 @@ const toProject = (row: Record<string, unknown>): Project => ({
   status: (row.status as ParseStatus | null) ?? null,
   nodeCount: toNumberOrNull(row.nodeCount),
   edgeCount: toNumberOrNull(row.edgeCount),
+  embeddingModel: (row.embeddingModel as string | null | undefined) ?? null,
+  embeddingDimensions: toNumberOrNull(row.embeddingDimensions),
   updatedAt: row.updatedAt == null ? null : String(row.updatedAt),
 });
 
@@ -290,8 +326,15 @@ export class ProjectService {
     status: ParseStatus;
     nodeCount: number;
     edgeCount: number;
+    /** What embedded the code; pass it when the parse completes, omit it when it fails. */
+    embedding?: { model: string; dimensions: number };
   }): Promise<void> {
-    await this.neo4j.run(UPDATE_PARSE_STATUS_QUERY, input);
+    const { embedding, ...status } = input;
+    await this.neo4j.run(UPDATE_PARSE_STATUS_QUERY, {
+      ...status,
+      embeddingModel: embedding?.model ?? null,
+      embeddingDimensions: embedding?.dimensions ?? null,
+    });
   }
 
   /** The id a parse stores under: an explicit id wins, then the project already registered at this path, then a new path hash. */
@@ -348,10 +391,30 @@ export class ProjectService {
     return projectIds.filter((projectId) => !known.has(projectId));
   }
 
+  async deleteProject(projectId: string): Promise<void> {
+    await this.neo4j.run(DELETE_PROJECT_QUERY, { projectId });
+  }
+
   /** Sets the kind on Project nodes written without one; returns how many it changed. */
   async backfillKinds(): Promise<number> {
     const rows = await this.neo4j.run(BACKFILL_PROJECT_KINDS_QUERY, {});
     return toNumber(rows[0]?.backfilled ?? 0);
+  }
+
+  /**
+   * Stamps each unstamped codebase from one of its embedded nodes; returns how many it stamped.
+   * The model stays null for vectors written before nodes recorded theirs.
+   */
+  async backfillEmbeddingStamps(): Promise<number> {
+    const rows = await this.neo4j.run(SELECT_UNSTAMPED_CODEBASES_QUERY, {});
+    if (rows.length === 0) return 0;
+    const stamps = rows.map((row) => ({
+      projectId: row.projectId as string,
+      dimensions: toNumber(row.dimensions),
+      model: (row.model as string | null) ?? null,
+    }));
+    const result = await this.neo4j.run(STAMP_EMBEDDINGS_QUERY, { stamps });
+    return toNumber(result[0]?.stamped ?? 0);
   }
 
   private async queryProjects(query: string, params: Record<string, unknown>): Promise<Project[]> {

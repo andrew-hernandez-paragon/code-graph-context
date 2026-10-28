@@ -14,7 +14,7 @@ import {
 } from '../../../core/projects/project.service.js';
 import { createSessionRecallTool } from '../session-recall.tool.js';
 import { createSessionSaveTool } from '../session-save.tool.js';
-import { createSessionUpdateTool } from '../session-update.tool.js';
+import { MOVE_NOTE_QUERY, createSessionUpdateTool } from '../session-update.tool.js';
 
 const { run } = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('../../../storage/neo4j/neo4j.service.js', async (importOriginal) => ({
@@ -91,6 +91,7 @@ const fakeRun = async (query: string, params: Record<string, any>) => {
     });
     return [{ noteId: params.noteId, topic: 'topic', content: 'content', lastValidated: 1 }];
   }
+  if (query === MOVE_NOTE_QUERY) return [{ noteId: params.noteId, chunks: 2 }];
   if (query.includes('RETURN count(r) AS dropped')) return [{ dropped: 1 }];
   if (query.includes('nodeEdges + fileEdges')) return [{ created: 3 }];
   if (query.includes('MATCH (n:SessionNote)\n  WHERE n.projectId IN $projectIds'))
@@ -328,5 +329,61 @@ describe('session_update anchors', () => {
     expect(updateParams.aboutPathHashes[0]).toHaveLength(64);
     expect(callsTo('RETURN count(r) AS dropped')).toEqual([]);
     expect(updated.aboutEdges).toBeNull();
+  });
+});
+
+describe('session_update moveToProjectId', () => {
+  it('moves the note and its chunks to the target, leaves the anchors alone and says where it went', async () => {
+    await saveNote({ aboutNodeIds: [OTHER_PROJECT_NODE] });
+
+    const updated = resultJson(
+      await handlerOf(createSessionUpdateTool)({
+        projectId: 'proj_code',
+        noteId: storedNote!.id,
+        moveToProjectId: 'notes',
+      }),
+    );
+
+    expect(callsTo('SET n.projectId')[0][1]).toEqual({
+      projectId: 'proj_code',
+      noteId: storedNote!.id,
+      targetProjectId: 'proj_notes',
+    });
+    expect(callsTo('RETURN count(r) AS dropped')).toEqual([]);
+    expect(updated.projectId).toBe('proj_notes');
+    expect(updated.moved).toEqual({ from: 'proj_code', to: 'proj_notes', toName: 'notes', chunks: 2 });
+  });
+
+  it("does nothing for a move to the note's current project", async () => {
+    await saveNote();
+
+    const updated = resultJson(
+      await handlerOf(createSessionUpdateTool)({
+        projectId: 'proj_code',
+        noteId: storedNote!.id,
+        moveToProjectId: 'code',
+        severity: 'warning',
+      }),
+    );
+
+    expect(callsTo('SET n.projectId')).toEqual([]);
+    expect(updated.moved).toBeNull();
+    expect(updated.projectId).toBe('proj_code');
+  });
+
+  it('writes nothing when the target project is not found', async () => {
+    await saveNote();
+    const writesBefore = callsTo('SET n.content').length;
+
+    const response = await handlerOf(createSessionUpdateTool)({
+      projectId: 'proj_code',
+      noteId: storedNote!.id,
+      moveToProjectId: 'no-such-project',
+    });
+
+    expect(response.isError).toBe(true);
+    expect(resultText(response)).toContain('No project has id, name or directory name');
+    expect(callsTo('SET n.content')).toHaveLength(writesBefore);
+    expect(callsTo('SET n.projectId')).toEqual([]);
   });
 });

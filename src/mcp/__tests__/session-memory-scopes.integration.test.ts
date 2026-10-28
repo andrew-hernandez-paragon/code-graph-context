@@ -5,7 +5,6 @@ import {
   FILTER_SEARCH_NOTES_QUERY,
   FIND_BOOKMARK_QUERY,
   VECTOR_SEARCH_BOOKMARKS_QUERY,
-  buildNoteSearchQuery,
   searchSessionNotes,
 } from '../tools/session-recall.tool.js';
 import { CREATE_BOOKMARK_QUERY, CREATE_SESSION_NOTE_QUERY } from '../tools/session-save.tool.js';
@@ -74,20 +73,6 @@ describe.skipIf(process.env.CGC_NEO4J_TESTS !== '1')('session memory queries in 
     const both = await searchSessionNotes(read, searchParams(noteProjects));
     expect(new Set(both.map((row) => row.projectId))).toEqual(new Set(noteProjects));
     expect(both[0].relevance).toBeGreaterThan(0.99);
-  });
-
-  it('semantic note search without the chunk index also stays within the requested projects', async () => {
-    const rows = await read.run(buildNoteSearchQuery(false), searchParams([noteProjects[1]]));
-    expect(rows.length).toBeGreaterThan(0);
-    expect(new Set(rows.map((row) => row.projectId))).toEqual(new Set([noteProjects[1]]));
-  });
-
-  it('a missing chunk index fails with a message the fallback recognizes', async () => {
-    const query = buildNoteSearchQuery().replaceAll('session_note_chunks_idx', 'session_note_chunks_idx_absent');
-    const failure = await read.run(query, searchParams(noteProjects)).catch((error: Error) => error);
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain('session_note_chunks_idx_absent');
-    expect((failure as Error).message).toMatch(/no such|not found|does not exist/i);
   });
 
   it('filter mode returns notes from the requested projects with their anchors', async () => {

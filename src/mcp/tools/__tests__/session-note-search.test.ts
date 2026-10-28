@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { searchSessionNotes } from '../session-recall.tool.js';
 
-describe('session note search without a chunk index', () => {
+describe('session note search', () => {
   const params = { projectIds: ['project'], limit: 5, queryEmbedding: [0.1] };
 
   it('returns chunk-aware results when the index is available', async () => {
@@ -20,19 +20,6 @@ describe('session note search without a chunk index', () => {
     expect(query).not.toContain('queryNodes');
   });
 
-  it('falls back to parent note search when the optional chunk index is missing', async () => {
-    const rows = [{ id: 'note', relevance: 0.8 }];
-    const run = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('There is no such vector schema index: session_note_chunks_idx'))
-      .mockResolvedValueOnce(rows);
-    expect(await searchSessionNotes({ run }, params)).toBe(rows);
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[1][0]).toContain('VECTOR INDEX session_notes_idx');
-    expect(run.mock.calls[1][0]).not.toContain('session_note_chunks_idx');
-    expect(run.mock.calls[1][1]).toBe(params);
-  });
-
   it('names the index when it cannot be searched by project', async () => {
     const run = vi.fn().mockRejectedValue(Object.assign(new Error('filter not declared'), { gqlStatus: '22ND3' }));
     await expect(searchSessionNotes({ run }, params)).rejects.toThrow(
@@ -43,8 +30,9 @@ describe('session note search without a chunk index', () => {
   it.each([
     'Connection refused',
     'There is no such vector schema index: session_notes_idx',
+    'There is no such vector schema index: session_note_chunks_idx',
     'session_note_chunks_idx requires 1024 dimensions',
-  ])('does not hide other errors: %s', async (message) => {
+  ])('rethrows the error without a fallback search: %s', async (message) => {
     const run = vi.fn().mockRejectedValue(new Error(message));
     await expect(searchSessionNotes({ run }, params)).rejects.toThrow(message);
     expect(run).toHaveBeenCalledTimes(1);

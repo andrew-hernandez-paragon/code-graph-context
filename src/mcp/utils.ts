@@ -130,8 +130,36 @@ export const createSuccessResponse = (text: string): { content: Array<{ type: 't
 export const createEmptyResponse = (
   message: string,
   suggestion?: string,
+  warnings: readonly string[] = [],
 ): { content: Array<{ type: 'text'; text: string }> } => {
-  return createSuccessResponse(JSON.stringify({ status: 'empty', message, ...(suggestion && { suggestion }) }));
+  return createSuccessResponse(
+    JSON.stringify({
+      status: 'empty',
+      message,
+      ...(suggestion && { suggestion }),
+      ...(warnings.length > 0 && { warnings }),
+    }),
+  );
+};
+
+/**
+ * Adds to the `warnings` of a JSON object response, keeping any the tool already reported.
+ * A plain-text response is kept as `message` so the result is always JSON.
+ */
+export const withWarnings = (responseText: string, warnings: readonly string[]): string => {
+  if (warnings.length === 0) return responseText;
+  let payload: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(responseText);
+    payload =
+      typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : { message: responseText };
+  } catch {
+    payload = { message: responseText };
+  }
+  const existing = Array.isArray(payload.warnings) ? (payload.warnings as unknown[]) : [];
+  return JSON.stringify({ ...payload, warnings: [...existing, ...warnings] });
 };
 
 /**

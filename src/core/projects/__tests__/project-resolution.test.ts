@@ -17,6 +17,8 @@ const project = (projectId: string, kind: RegisteredProject['kind'], path: strin
   status: null,
   nodeCount: null,
   edgeCount: null,
+  embeddingModel: null,
+  embeddingDimensions: null,
   updatedAt: null,
 });
 

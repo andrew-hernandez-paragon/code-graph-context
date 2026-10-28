@@ -8,10 +8,14 @@ import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { resolveSidecarPython, resolveSidecarVenvDir } from './sidecar-venv.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // sidecar/ lives at project root; go up from dist/core/embeddings/ or src/core/embeddings/
 export const SIDECAR_DIR = join(__dirname, '..', '..', '..', 'sidecar');
+
+export const LEGACY_SIDECAR_VENV_DIR = join(SIDECAR_DIR, '.venv');
 
 export const DEFAULT_IDLE_TIMEOUT_S = 600;
 
@@ -40,16 +44,14 @@ export const readIdleTimeoutS = (): number => {
   return DEFAULT_IDLE_TIMEOUT_S;
 };
 
-/** Prefer PYTHON_EXECUTABLE, then the sidecar venv, then system python. */
-export const resolvePython = (): string => {
-  if (process.env.PYTHON_EXECUTABLE) return process.env.PYTHON_EXECUTABLE;
-  const isWindows = process.platform === 'win32';
-  const venvPython = isWindows
-    ? join(SIDECAR_DIR, '.venv', 'Scripts', 'python.exe')
-    : join(SIDECAR_DIR, '.venv', 'bin', 'python3');
-  if (existsSync(venvPython)) return venvPython;
-  return isWindows ? 'python' : 'python3';
-};
+export const resolvePython = (): string =>
+  resolveSidecarPython({
+    env: process.env,
+    platform: process.platform,
+    venvDir: resolveSidecarVenvDir(process.env),
+    legacyVenvDir: LEGACY_SIDECAR_VENV_DIR,
+    exists: existsSync,
+  });
 
 export const launchEmbeddingServer = (options: EmbeddingServerLaunchOptions): ChildProcess =>
   spawn(

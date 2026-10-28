@@ -20,6 +20,8 @@ export interface StoredProject {
   path?: string | null;
   description?: string | null;
   status?: string | null;
+  embeddingModel?: string | null;
+  embeddingDimensions?: number | null;
 }
 
 type Row = Record<string, any>;
@@ -36,6 +38,8 @@ export const createProjectStore = (initial: StoredProject[]) => {
     status: null,
     nodeCount: null,
     edgeCount: null,
+    embeddingModel: null,
+    embeddingDimensions: null,
     updatedAt: null,
     ...project,
   });

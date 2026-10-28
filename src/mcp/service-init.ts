@@ -144,6 +144,9 @@ const initializeNeo4jDependentServices = async (): Promise<void> => {
   // Idempotent: sets Project.kind on nodes written by servers that predate it.
   await backfillProjectKinds();
 
+  // Idempotent: stamps each codebase with the model that embedded it, for the mismatch warnings.
+  await backfillEmbeddingStamps();
+
   // Before the steps below write or index vectors, so none of them recreates an unfiltered index.
   await rebuildVectorIndexes();
 
@@ -217,6 +220,22 @@ const backfillProjectKinds = async (): Promise<void> => {
   } catch (error) {
     // Reads fall back to the same rule through projectKindCypher, so a failed backfill loses nothing.
     logError(`Project kind backfill skipped: ${describeError(error)}`);
+  }
+};
+
+const backfillEmbeddingStamps = async (): Promise<void> => {
+  try {
+    const neo4jService = new Neo4jService();
+    try {
+      const stamped = await new ProjectService(neo4jService).backfillEmbeddingStamps();
+      if (stamped > 0) {
+        logInfo(`Recorded the embedding model of ${stamped} codebase(s)`);
+      }
+    } finally {
+      await neo4jService.close();
+    }
+  } catch (error) {
+    logError(`Embedding stamp backfill skipped: ${describeError(error)}`);
   }
 };
 

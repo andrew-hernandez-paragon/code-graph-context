@@ -227,6 +227,7 @@ const runParser = async (): Promise<void> => {
       status: 'complete',
       nodeCount: totalNodesImported,
       edgeCount: totalEdgesImported,
+      embedding: { model: embeddingsService.model, dimensions: embeddingsService.dimensions },
     });
     await debugLog('Project node updated', {
       projectId: resolvedProjectId,

@@ -87,6 +87,19 @@ export const RECREATE_NOTE_ABOUT_EDGES_QUERY = `
   RETURN nodeEdges + fileEdges AS created
 `;
 
+/**
+ * Moves the note and its chunks to another project. Anchors stay as they are: node ids,
+ * :ABOUT edges and aboutPaths do not depend on the project that holds the note.
+ */
+export const MOVE_NOTE_QUERY = `
+  MATCH (n:SessionNote {id: $noteId, projectId: $projectId})
+  SET n.projectId = $targetProjectId
+  WITH n
+  OPTIONAL MATCH (c:SessionNoteChunk {projectId: $projectId, parentNoteId: $noteId})
+  SET c.projectId = $targetProjectId
+  RETURN n.id AS noteId, count(c) AS chunks
+`;
+
 export const createSessionUpdateTool = (server: McpServer): void => {
   server.registerTool(
     TOOL_NAMES.sessionUpdate,
@@ -120,10 +133,16 @@ export const createSessionUpdateTool = (server: McpServer): void => {
           .describe(
             'Set to a noteId (or any non-null value) to mark this note superseded. Pass `null` explicitly to clear. Omit to leave unchanged.',
           ),
+        moveToProjectId: z
+          .string()
+          .optional()
+          .describe(
+            "Move the note and its chunks to this project or collection (id, name or path). Its anchors stay as they are. Moving to the note's current project does nothing.",
+          ),
       },
     },
     async (args) => {
-      const { projectId, noteId, topic, content, category, severity, aboutNodeIds, aboutPaths } = args;
+      const { projectId, noteId, topic, content, category, severity, aboutNodeIds, aboutPaths, moveToProjectId } = args;
 
       // Distinguish "not provided" from "explicitly null" for supersededBy.
       const supersededByProvided = Object.prototype.hasOwnProperty.call(args, 'supersededBy');
@@ -136,6 +155,10 @@ export const createSessionUpdateTool = (server: McpServer): void => {
         if (!projectResult.success) return projectResult.error;
         const project = projectResult.project;
         const resolvedProjectId = project.projectId;
+
+        const targetResult = moveToProjectId ? await findProjectOrError(moveToProjectId, neo4jService) : null;
+        if (targetResult && !targetResult.success) return targetResult.error;
+        const moveTarget = targetResult?.project.projectId !== resolvedProjectId ? targetResult?.project : undefined;
 
         const storedRows = await neo4jService.run(FIND_NOTE_ANCHORS_QUERY, { projectId: resolvedProjectId, noteId });
         if (storedRows.length === 0) {
@@ -201,12 +224,28 @@ export const createSessionUpdateTool = (server: McpServer): void => {
           }
         }
 
+        const moveRows = moveTarget
+          ? await neo4jService.run(MOVE_NOTE_QUERY, {
+              projectId: resolvedProjectId,
+              noteId,
+              targetProjectId: moveTarget.projectId,
+            })
+          : [];
+
         return createSuccessResponse(
           JSON.stringify(
             {
               success: true,
               noteId: updated.noteId,
-              projectId: resolvedProjectId,
+              projectId: moveTarget?.projectId ?? resolvedProjectId,
+              moved: moveTarget
+                ? {
+                    from: resolvedProjectId,
+                    to: moveTarget.projectId,
+                    toName: moveTarget.name,
+                    chunks: toNumber(moveRows[0]?.chunks ?? 0),
+                  }
+                : null,
               fieldsUpdated: {
                 topic: topic != null,
                 content: content != null,

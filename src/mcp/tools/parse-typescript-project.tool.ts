@@ -347,6 +347,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
               status: 'complete',
               nodeCount: result.nodesImported,
               edgeCount: result.edgesImported,
+              embedding: { model: embeddingsService.model, dimensions: embeddingsService.dimensions },
             });
             await debugLog('Project status updated to complete', { projectId: resolvedProjectId });
 
@@ -447,6 +448,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
             status: 'complete',
             nodeCount: result.nodesImported,
             edgeCount: result.edgesImported,
+            embedding: { model: embeddingsService.model, dimensions: embeddingsService.dimensions },
           });
           await debugLog('Project status updated to complete', { projectId: finalProjectId });
 

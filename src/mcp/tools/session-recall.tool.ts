@@ -153,20 +153,14 @@ const notePool = (index: typeof VECTOR_INDEXES.sessionNotes | typeof VECTOR_INDE
   });
 
 // Return the parent once, using its strongest direct or chunk match.
-export const buildNoteSearchQuery = (includeChunks = true): string => `CYPHER 25
+const buildNoteSearchQuery = (): string => `CYPHER 25
   CALL () {
     ${notePool(VECTOR_INDEXES.sessionNotes, 'note')}
     RETURN note AS n, score
-    ${
-      includeChunks
-        ? `
     UNION ALL
     ${notePool(VECTOR_INDEXES.sessionNoteChunks, 'chunk')}
     MATCH (chunk)-[:PART_OF]->(parent:SessionNote)
     RETURN parent AS n, score
-    `
-        : ''
-    }
   }
 
   WITH n, max(score) AS score
@@ -195,20 +189,11 @@ export const buildNoteSearchQuery = (includeChunks = true): string => `CYPHER 25
            END
 `;
 
-export const searchSessionNotes = async (
+export const searchSessionNotes = (
   neo4jService: Pick<Neo4jService, 'run'>,
   params: Record<string, unknown>,
-): Promise<any[]> => {
-  try {
-    return await runProjectFilteredSearch(neo4jService, VECTOR_INDEXES.sessionNotes, buildNoteSearchQuery(), params);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes('session_note_chunks_idx') || !/no such|not found|does not exist/i.test(message)) {
-      throw error;
-    }
-    return runProjectFilteredSearch(neo4jService, VECTOR_INDEXES.sessionNotes, buildNoteSearchQuery(false), params);
-  }
-};
+): Promise<any[]> =>
+  runProjectFilteredSearch(neo4jService, VECTOR_INDEXES.sessionNotes, buildNoteSearchQuery(), params);
 
 /**
  * Filter-based (non-semantic) search for session notes.

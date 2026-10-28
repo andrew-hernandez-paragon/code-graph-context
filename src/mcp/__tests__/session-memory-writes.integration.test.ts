@@ -14,8 +14,8 @@ import {
 } from '../tools/session-update.tool.js';
 
 // Opt in with CGC_NEO4J_WRITE_TESTS=1 against a local Neo4j. These tests WRITE, so they touch only
-// project ids that start with proj_cgctest_ and delete everything under that prefix afterwards.
-const TEST_PREFIX = 'proj_cgctest_';
+// project ids that start with proj_cgctest_writes_ and delete everything under that prefix afterwards.
+const TEST_PREFIX = 'proj_cgctest_writes_';
 const CODEBASE_ID = `${TEST_PREFIX}code`;
 const COLLECTION_ID = `${TEST_PREFIX}notes`;
 const NODE_ID = `${CODEBASE_ID}:function-one`;
@@ -28,7 +28,7 @@ describe.skipIf(process.env.CGC_NEO4J_WRITE_TESTS !== '1')('session memory write
     nodeRefs: { id: string; projectId: string }[];
     sourceFileRefs: { projectId: string; filePath: string }[];
   };
-  const noteId = 'note_cgctest_1';
+  const noteId = 'note_cgctest_writes_1';
 
   const countAboutEdges = async (): Promise<number> => {
     const rows = await db.run(`MATCH (:SessionNote {id: $noteId})-[r:ABOUT]->() RETURN count(r) AS edges`, { noteId });
