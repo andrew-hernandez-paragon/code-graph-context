@@ -145,10 +145,11 @@ export class EmbeddingSidecar {
       port: this.config.port,
       model: this.config.model,
       idleTimeoutS: this.config.idleTimeoutS,
-      // stdin='pipe' so the child detects parent death when the pipe breaks
+      // stdin='pipe' so the child detects parent death when the pipe breaks. stdout is ignored: uvicorn writes an
+      // access line per request there, and a pipe nobody reads fills and blocks the server after ~1000 requests.
       watchParent: true,
       detached: false,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'ignore', 'pipe'],
     });
 
     // Store pid for synchronous cleanup on exit
