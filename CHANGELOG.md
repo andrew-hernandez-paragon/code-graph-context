@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.0] - Hybrid Recall - 2026-10-29
+
+Note recall finds notes by keyword and through the code they are anchored to, not only by embedding, and a reranker orders what it finds. Code search shows the notes anchored to the code it matched.
+
+### Added
+
+- **Note recall searches three ways and reranks.** `session_recall` and the notes section of `query_signals` merge nearest notes by embedding, a keyword search over note topic and content (new full-text index `session_notes_fts_idx`, created at server start), and the notes anchored to files a code search of the query matched. A cross-encoder (`BAAI/bge-reranker-base`, in the embedding sidecar) orders the top 30 and drops notes scoring under 0.02. On 48 labeled real recall queries run through the server, a relevant note reached the top 5 for 0.83 of queries instead of 0.77, the relevant share of returned notes rose from 0.38 to 0.48, and recall of relevant notes from 0.58 to 0.69, at the same 3.9 notes per call and about 0.35 s more per recall. Each note reports `matchedBy` and `rerankScore`; `relevance` stays the vector similarity and is null for a note only keyword or code found. Method and numbers: `docs/code-graph-context/research/recall-v2.md` in the owner's docs tree. (`src/mcp/handlers/note-search.ts`)
+- **The sidecar serves `POST /rerank`.** It loads the reranker in the background at start, downloading it on first use. `RERANK_MODEL` picks another cross-encoder, or turns reranking off with `none`. Without a reranker (an older shared sidecar, OpenAI embeddings, or `RERANK_MODEL=none`), recall keeps the merged order, and a note only the embedding found must still reach the calibrated floor.
+- **`search_codebase` lists the notes anchored to its results.** `notes` holds up to five live notes anchored to a matched or traversed node, or naming a matched file in `aboutPaths`, each with its topic and the first 400 characters. A note reached through the traversal now shows its topic instead of a bare id. (`src/mcp/handlers/anchored-notes.ts`)
+
+### Changed
+
+- **`query_signals`' code section fuses keyword and vector search,** as `search_codebase` does, instead of vector only.
+- A caller's `minSimilarity` on note recall now applies to notes only the embedding found, and replaces the reranker floor.
+
 ## [5.7.1] - Calibrated Recall - 2026-10-28
 
 Note recall returns fewer weak matches by default.
