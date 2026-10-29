@@ -67,12 +67,22 @@ Plan and measurements: `~/develop/docs/code-graph-context/plans/memory-scopes/` 
 - **Problem:** Native Neo4j reads its own override, so the two can point at different roots.
 - **Fix:** Derive the Neo4j home from `CGC_DATA_DIR` by default and keep `CGC_NEO4J_HOME` only as an explicit override.
 
-### 18. Note recall needs a second signal beyond embeddings
-- **Files:** `src/mcp/tools/session-recall.tool.ts`, `src/mcp/handlers/session-note-query-clauses.ts`, `src/storage/neo4j/vector-indexes.ts`
-- **Evidence:** `~/develop/docs/code-graph-context/research/recall-relevance-calibration.md`. On 812 blind-labeled pairs, embedding similarity separates relevant from irrelevant notes at ROC AUC 0.815; the calibrated floor (5.7.1) lifts precision only from 0.31 to 0.39. 8 of 48 real queries had no relevant note and still receive weak matches.
-- **Fix:** A full-text index on note topic and content fused with the vector channel by reciprocal rank (as `search_codebase` already does), then a cross-encoder reranker over the top 20. Measure each against the labels in `~/develop/data/code-graph-context/recall-eval/`.
-
 ### 19. Runbench's primer floor was not calibrated
 - **File:** `~/coding/runbench/packages/orchestrator/src/learnings-primer.ts` (`MIN_COSINE = 0.55`)
 - **Problem:** The 0.60 calibration used agent recall queries; the primer queries with ticket text, a different distribution.
 - **Fix:** Label a sample of primer queries the same way and set its floor from them.
+
+### 20. Runbench's learnings primer has its own note query
+- **File:** `~/coding/runbench/packages/orchestrator/src/learnings-primer.ts` (`NoteRetrieval`)
+- **Problem:** The primer runs its own Cypher (vector plus path anchors), so the keyword channel and reranker of 5.8.0 never reach Runbench agents.
+- **Fix:** Call `session_recall` or a shared package export instead of duplicating the query, then calibrate on primer queries (#19).
+
+### 21. Code search: test files, config files, constant uses
+- **Evidence:** `~/develop/docs/code-graph-context/research/benchmarks-2026-10.md`, sections 2 and 3.
+- **Problems:** The parser always skips `*.spec.ts` and `*.test.ts`, so "which tests cover this" cannot be answered. `package.json` config nodes take most top matches for long queries (217 of 350 in one run). No edge records a file using a constant, so "who uses X" misses those files.
+- **Fix:** An `includeTests` parse option; keep `ConfigFile` nodes out of default search unless the query names a config file; a reference edge from a use of an exported constant to its declaration. Measure each on the ARB TypeScript tasks and the code-question set.
+
+### 22. Recall over raw session history
+- **Evidence:** `~/develop/docs/code-graph-context/research/benchmarks-2026-10.md`, section 1. Plain search over raw transcripts answered 0.85 of recall queries against 0.69 for notes before 5.8.0; most of that edge is old tool output.
+- **Decision needed:** whether to index Claude and Cursor transcripts (anchored to the files they touched) as a recall channel. It would store transcript text, secrets included, in the graph, and Claude Code deletes transcripts after 30 days unless `cleanupPeriodDays` is raised.
+

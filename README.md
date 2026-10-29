@@ -198,6 +198,7 @@ If you prefer to edit the config files directly:
 | `CGC_DATA_DIR` | No | `~/.local/share/code-graph-context` | Holds the sidecar virtualenv (`sidecar-venv`) |
 | `EMBEDDING_DEVICE` | No | auto (`mps`/`cpu`) | Device for embeddings. Auto-detects MPS on Apple Silicon |
 | `EMBEDDING_HALF_PRECISION` | No | `false` | Set `true` for float16 (uses ~0.5x memory) |
+| `RERANK_MODEL` | No | `BAAI/bge-reranker-base` | Cross-encoder that orders recalled notes; `none` turns reranking off |
 | `OPENAI_EMBEDDINGS_ENABLED` | No | `false` | Use OpenAI only when `true` and a nonempty API key is set |
 | `OPENAI_API_KEY` | No* | - | Required when `OPENAI_EMBEDDINGS_ENABLED=true`; also enables `natural_language_to_cypher` |
 
@@ -493,6 +494,8 @@ Every tool takes `projectId`: an id, a name, or a path. A path inside a register
 
 `list_projects` shows every project with its kind and memory counts. `session_save` on a path inside an unregistered git repository registers it as a directory. `session_recall` takes `projectIds` to recall across several projects at once. Anchor a note with `aboutNodeIds` (from `search_codebase`) or `aboutPaths` (files and folders); recall reports `staleAboutNodeIds`, `missingAboutPaths` and `changedAboutPaths` when an anchor no longer matches. Replace a note with `session_save` and `supersedes: [oldId]`.
 
+Recall by query merges three searches: nearest notes by embedding, a keyword search over note topic and content, and the notes anchored to the files a code search of the query matches. A small cross-encoder in the embedding sidecar (`BAAI/bge-reranker-base`) orders the result and drops weak matches; set `RERANK_MODEL=none` to turn it off. `search_codebase` lists the notes anchored to the code it found.
+
 ```typescript
 search_codebase({ projectId: "my-backend", query: "auth" })
 create_project({ kind: "directory", path: "/path/to/terraform" })
@@ -558,7 +561,7 @@ An API key alone only enables `natural_language_to_cypher`. OpenAI embeddings re
 
 Use the same explicit `EMBEDDING_MODEL` in every client sharing a sidecar and graph. The server rejects a sidecar whose model or vector dimensions differ from the configured model, including different models with equal dimensions.
 
-The sidecar uses **MPS (Apple Silicon GPU)** when available, falling back to CPU. The server owns its lifetime: it exits after `EMBEDDING_IDLE_TIMEOUT_S` seconds (default 600, `0` disables) without a `/embed` request, whoever sent it, and the MCP server starts it again on the next embedding (~15-20s).
+The sidecar uses **MPS (Apple Silicon GPU)** when available, falling back to CPU. The server owns its lifetime: it exits after `EMBEDDING_IDLE_TIMEOUT_S` seconds (default 600, `0` disables) without an `/embed` or `/rerank` request, whoever sent it, and the MCP server starts it again on the next embedding (~15-20s).
 
 Any process can start a server that outlives it with `code-graph-context embeddings start`. It exits 0 once `/health` is ok (printing the model and port) and exits 1 with the reason and the log path (`code-graph-context-embedding-sidecar.log` in the temp directory) otherwise. A server started this way does not watch a parent process; one spawned by the MCP server still exits when the MCP server does (`EMBEDDING_WATCH_PARENT=0` turns that watch off).
 
