@@ -48,7 +48,7 @@ describe('note search', () => {
     expect(KEYWORD_NOTE_CANDIDATES_QUERY).toContain("queryNodes('session_notes_fts_idx'");
   });
 
-  it('fuses channels by rank, so a note two channels found outranks one found by either', () => {
+  it('fuses channels by weighted rank: two channels beat one, and a keyword hit outweighs a vector hit at the same rank', () => {
     const fused = fuseNoteChannels([
       {
         channel: 'vector',
@@ -60,9 +60,9 @@ describe('note search', () => {
       },
       { channel: 'keyword', ids: ['c', 'b'] },
     ]);
-    expect(fused.map((c) => c.id)).toEqual(['b', 'a', 'c']);
+    expect(fused.map((c) => c.id)).toEqual(['b', 'c', 'a']);
     expect(fused[0]).toMatchObject({ channels: ['vector', 'keyword'], vectorScore: 0.85 });
-    expect(fused[2]).toMatchObject({ channels: ['keyword'], vectorScore: null });
+    expect(fused[1]).toMatchObject({ channels: ['keyword'], vectorScore: null });
   });
 
   it('orders by reranker score and cuts at the calibrated floor', async () => {
@@ -73,11 +73,11 @@ describe('note search', () => {
       ],
       ['c'],
     );
-    const rerank = vi.fn().mockResolvedValue([0.01, 0.6, 0.3]);
+    const rerank = vi.fn().mockResolvedValue([0.6, 0.01, 0.3]);
     const rows = await searchSessionNotes(neo4j, options({ rerank }));
     expect(rerank).toHaveBeenCalledWith('retry budget for flushes', [
-      'topic a\ncontent a',
       'topic c\ncontent c',
+      'topic a\ncontent a',
       'topic b\ncontent b',
     ]);
     expect(rows.map((row) => [row.id, row.rerankScore, row.matchedBy])).toEqual([
@@ -96,7 +96,7 @@ describe('note search', () => {
       ['c'],
     );
     const rows = await searchSessionNotes(neo4j, options({ rerank: vi.fn().mockResolvedValue(null) }));
-    expect(rows.map((row) => row.id)).toEqual(['a', 'c']);
+    expect(rows.map((row) => row.id)).toEqual(['c', 'a']);
     expect(rows.every((row) => row.rerankScore === null)).toBe(true);
   });
 

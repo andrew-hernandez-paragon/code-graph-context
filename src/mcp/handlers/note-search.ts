@@ -22,7 +22,7 @@ import {
 import { VECTOR_INDEXES } from '../../storage/neo4j/vector-indexes.js';
 import { debugLog } from '../utils.js';
 
-import { buildLuceneQuery, RRF_K, searchCodeHybrid } from './query-signals.handler.js';
+import { buildLuceneQuery, searchCodeHybrid } from './query-signals.handler.js';
 import {
   NOTE_ABOUT_NODES_CLAUSE,
   NOTE_NOT_EXPIRED_CLAUSE,
@@ -39,6 +39,14 @@ const CODE_MATCHES = 20;
 
 /** search_codebase's own default floor for the code vector channel: cosine 0. */
 const CODE_MIN_SIMILARITY = 0.5;
+
+/**
+ * Fusion settings from a sweep over the labeled queries (recall-v2.md): with the reranker they barely
+ * matter, and without it keyword matches deserve three times the vector channel's weight, because recall
+ * queries are lists of the words a note uses. A small k lets rank 1 count for more than rank 10.
+ */
+const NOTE_RRF_K = 10;
+const NOTE_CHANNEL_WEIGHTS: Record<NoteChannel, number> = { vector: 1, keyword: 3, code: 1 };
 
 /** A cross-encoder reads about 512 tokens; the rest of a long note would be cut anyway. */
 const RERANK_TEXT_CHARS = 2000;
@@ -248,16 +256,17 @@ const codeCandidates = async (
   return rows.map((row) => row.id as string);
 };
 
-/** Reciprocal-rank fusion: each channel adds 1 / (k + rank), because cosine, BM25 and file rank share no scale. */
+/** Weighted reciprocal-rank fusion: each channel adds weight / (k + rank), because cosine, BM25 and file rank share no scale. */
 export const fuseNoteChannels = (
   channels: { channel: NoteChannel; ids: string[]; scores?: Map<string, number> }[],
-  k: number = RRF_K,
+  k: number = NOTE_RRF_K,
+  weights: Record<NoteChannel, number> = NOTE_CHANNEL_WEIGHTS,
 ): Candidate[] => {
   const fused = new Map<string, Candidate>();
   for (const { channel, ids, scores } of channels) {
     ids.forEach((id, rank) => {
       const candidate = fused.get(id) ?? { id, fusedScore: 0, vectorScore: null, channels: [] };
-      candidate.fusedScore += 1 / (k + rank + 1);
+      candidate.fusedScore += weights[channel] / (k + rank + 1);
       candidate.channels.push(channel);
       if (channel === 'vector') candidate.vectorScore = scores?.get(id) ?? null;
       fused.set(id, candidate);
