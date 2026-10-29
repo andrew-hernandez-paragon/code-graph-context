@@ -11,8 +11,9 @@ import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { embeddingWarnings } from '../../core/projects/index.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, DEFAULTS, PROJECT_ID_DESCRIPTION } from '../constants.js';
+import { findAnchoredNotes } from '../handlers/anchored-notes.js';
 import { searchCodeHybrid, type FusedSearchRow } from '../handlers/query-signals.handler.js';
-import { searchMatchesOf, withSearchMatches } from '../handlers/search-matches.js';
+import { searchMatchesOf, traversalNodeIdsOf, withSearchMatches } from '../handlers/search-matches.js';
 import { TraversalHandler } from '../handlers/traversal.handler.js';
 import {
   createEmptyResponse,
@@ -157,7 +158,12 @@ export const createSearchCodebaseTool = (server: McpServer): void => {
 
         const first = traversalResult.content?.[0];
         if (first?.type === 'text') {
-          first.text = withWarnings(withSearchMatches(first.text, matches), warnings);
+          const notes = await findAnchoredNotes(
+            neo4jService,
+            [...new Set([...matches.map((match) => match.id), ...traversalNodeIdsOf(first.text)])],
+            [...new Set(matches.flatMap((match) => (match.filePath ? [match.filePath] : [])))],
+          );
+          first.text = withWarnings(withSearchMatches(first.text, matches, notes), warnings);
         }
 
         return traversalResult;

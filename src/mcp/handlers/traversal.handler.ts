@@ -514,6 +514,12 @@ export class TraversalHandler {
       result.name = node.properties.name;
     }
 
+    // A note reached through an ABOUT edge has no name; its topic says what it is.
+    const { properties } = node;
+    if (node.labels.includes('SessionNote') && 'topic' in properties && typeof properties.topic === 'string') {
+      result.topic = properties.topic;
+    }
+
     if (includeCode && node.properties.sourceCode && node.properties.coreType !== 'SourceFile') {
       const truncateResult = truncateCode(node.properties.sourceCode, snippetLength);
       result.sourceCode = truncateResult.text;

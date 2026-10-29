@@ -3,6 +3,7 @@
  * read without parsing prose: rank 1 is the node the traversal starts from.
  */
 
+import type { AnchoredNote } from './anchored-notes.js';
 import type { FusedSearchRow, SearchChannel } from './query-signals.handler.js';
 
 export interface SearchMatch {
@@ -46,11 +47,15 @@ export const searchMatchesOf = (rows: readonly FusedSearchRow[]): SearchMatch[] 
   });
 
 /**
- * Adds the matches to a traversal response. The traversal answers in JSON,
+ * Adds the matches, and the notes anchored to them, to a traversal response. The traversal answers in JSON,
  * except when the start node has no connections, which it reports as a
  * sentence; that sentence is kept as `message` so the result is always JSON.
  */
-export const withSearchMatches = (traversalText: string, matches: readonly SearchMatch[]): string => {
+export const withSearchMatches = (
+  traversalText: string,
+  matches: readonly SearchMatch[],
+  notes: readonly AnchoredNote[] = [],
+): string => {
   let payload: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(traversalText);
@@ -61,5 +66,16 @@ export const withSearchMatches = (traversalText: string, matches: readonly Searc
   } catch {
     payload = { message: traversalText };
   }
-  return JSON.stringify({ ...payload, matches });
+  return JSON.stringify({ ...payload, matches, ...(notes.length > 0 ? { notes } : {}) });
+};
+
+/** The node ids in a traversal response's nodes map; [] when the response is not that JSON. */
+export const traversalNodeIdsOf = (traversalText: string): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(traversalText);
+    const nodes = typeof parsed === 'object' && parsed !== null ? (parsed as { nodes?: unknown }).nodes : undefined;
+    return typeof nodes === 'object' && nodes !== null ? Object.keys(nodes) : [];
+  } catch {
+    return [];
+  }
 };

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import type { FusedSearchRow } from '../query-signals.handler.js';
-import { searchMatchesOf, withSearchMatches } from '../search-matches.js';
+import { searchMatchesOf, traversalNodeIdsOf, withSearchMatches } from '../search-matches.js';
 
 const row = (overrides: Partial<FusedSearchRow> & { props: Record<string, unknown> }): FusedSearchRow => ({
   node: { id: '4:abc:1', labels: ['Class'], properties: overrides.props },
@@ -71,6 +71,26 @@ describe('withSearchMatches', () => {
     const text = withSearchMatches('{"startNodeId":"n1","nodes":{}}', matches);
 
     expect(JSON.parse(text)).toEqual({ startNodeId: 'n1', nodes: {}, matches });
+  });
+
+  it('adds the notes anchored to the matches when there are any', () => {
+    const notes = [
+      {
+        id: 'note_1',
+        projectId: 'p',
+        topic: 'Retry cap',
+        preview: 'The cap is read',
+        category: 'insight',
+        anchors: ['n1'],
+      },
+    ];
+
+    expect(JSON.parse(withSearchMatches('{"nodes":{}}', matches, notes))).toEqual({ nodes: {}, matches, notes });
+  });
+
+  it('lists the node ids of a traversal, and none for a plain-text answer', () => {
+    expect(traversalNodeIdsOf('{"nodes":{"a":{},"b":{}}}')).toEqual(['a', 'b']);
+    expect(traversalNodeIdsOf('No connections found for node "n1".')).toEqual([]);
   });
 
   it('keeps a plain-text traversal answer as message, so the result is still JSON', () => {
