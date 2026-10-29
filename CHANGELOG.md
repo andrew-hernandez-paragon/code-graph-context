@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.1] - Recall Tuning - 2026-10-29
+
+### Changed
+
+- **Note recall weights keyword matches three times the vector channel and uses RRF k=10.** A sweep over the 48 labeled recall queries found that with the reranker the merge settings barely matter, but without it (a sidecar older than 5.8.0, OpenAI embeddings, or `RERANK_MODEL=none`) these settings lift queries with a relevant note in the top 5 from 0.71 to 0.73 and the relevant share of returned notes from 0.28 to 0.35. With the reranker, recall of relevant notes moves from 0.60 to 0.62. (`src/mcp/handlers/note-search.ts`)
+
 ## [5.8.0] - Hybrid Recall - 2026-10-29
 
 Note recall finds notes by keyword and through the code they are anchored to, not only by embedding, and a reranker orders what it finds. Code search shows the notes anchored to the code it matched.
