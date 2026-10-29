@@ -262,13 +262,21 @@ export interface FusedSearchRow extends SearchCodeRawRow {
   channels: SearchChannel[];
 }
 
+/** A full-text field to search, and how much a hit in it counts against the others. */
+export interface LuceneField {
+  name: string;
+  boost?: number;
+}
+
+const CODE_FIELDS: readonly LuceneField[] = [{ name: 'name', boost: NAME_FIELD_BOOST }, { name: 'sourceCode' }];
+
 /**
- * Turn free text into a Lucene query, or null when nothing searchable is left.
+ * Turn free text into a Lucene query over `fields`, or null when nothing searchable is left.
  *
  * Every reserved character is escaped, so a query like `what does foo() do?`
  * is matched literally instead of being parsed as grouping and wildcards.
  */
-export const buildLuceneQuery = (raw: string): string | null => {
+export const buildLuceneQuery = (raw: string, fields: readonly LuceneField[] = CODE_FIELDS): string | null => {
   const terms = raw
     .split(/\s+/)
     .filter((term) => /[\p{L}\p{N}]/u.test(term))
@@ -278,7 +286,7 @@ export const buildLuceneQuery = (raw: string): string | null => {
   if (terms.length === 0) return null;
 
   const joined = terms.join(' ');
-  return `name:(${joined})^${NAME_FIELD_BOOST} OR sourceCode:(${joined})`;
+  return fields.map(({ name, boost }) => `${name}:(${joined})${boost ? `^${boost}` : ''}`).join(' OR ');
 };
 
 /**

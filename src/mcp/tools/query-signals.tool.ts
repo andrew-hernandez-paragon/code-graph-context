@@ -43,64 +43,15 @@ import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { embeddingWarnings, ProjectService, type Project } from '../../core/projects/index.js';
 import { toNumberOrNull } from '../../core/utils/shared-utils.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import {
-  NOTE_CANDIDATES_PER_PROJECT,
-  nearestNeighborsInProjects,
-  runProjectFilteredSearch,
-} from '../../storage/neo4j/project-vector-search.js';
-import { VECTOR_INDEXES } from '../../storage/neo4j/vector-indexes.js';
 import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
-import { projectCodeResult, probeEmbeddingsHealth, searchCodeRaw } from '../handlers/query-signals.handler.js';
+import { NO_NOTE_FILTERS, searchSessionNotes, type NoteChannel } from '../handlers/note-search.js';
+import { projectCodeResult, probeEmbeddingsHealth, searchCodeHybrid } from '../handlers/query-signals.handler.js';
 import {
   NOTE_ABOUT_NODES_CLAUSE,
   NOTE_NOT_EXPIRED_CLAUSE,
   NOTE_NOT_SUPERSEDED_CLAUSE,
 } from '../handlers/session-note-query-clauses.js';
 import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
-
-/**
- * Notes Cypher: optional sinceMs filter on lastValidated/createdAt.
- * Keeps the supersededBy filter and expiresAt freshness filter.
- * Searches inside the index per project; `$candidates` is the per-project neighbour count.
- */
-const VECTOR_SEARCH_NOTES_FOR_SIGNALS = `
-  ${nearestNeighborsInProjects({
-    index: VECTOR_INDEXES.sessionNotes,
-    node: 'n',
-    score: 'relevance',
-    queryVector: '$queryEmbedding',
-    neighbors: '$candidates',
-  })}
-  WITH n, relevance
-  WHERE ${NOTE_NOT_EXPIRED_CLAUSE}
-    AND ($sinceMs IS NULL OR coalesce(n.lastValidated, n.createdAt) >= $sinceMs)
-    AND ${NOTE_NOT_SUPERSEDED_CLAUSE}
-    AND relevance >= $minSimilarity
-
-  ${NOTE_ABOUT_NODES_CLAUSE}
-
-  RETURN
-    n.id AS id,
-    n.projectId AS projectId,
-    n.topic AS topic,
-    n.content AS content,
-    n.category AS category,
-    n.severity AS severity,
-    n.lastValidated AS lastValidated,
-    n.createdAt AS createdAt,
-    coalesce(n.aboutNodeIds, []) AS aboutNodeIds,
-    relevance,
-    collect(DISTINCT {id: codeNode.id, name: codeNode.name, filePath: codeNode.filePath}) AS aboutNodes
-
-  ORDER BY relevance DESC,
-           n.lastValidated DESC,
-           CASE n.severity
-             WHEN 'critical' THEN 0
-             WHEN 'warning'  THEN 1
-             ELSE 2
-           END
-  LIMIT toInteger($limit)
-`;
 
 /**
  * Cypher-only fallback for notes when embedder is unavailable (0008).
@@ -245,6 +196,8 @@ interface NoteResult {
   category: string | null;
   severity: string | null;
   relevance: number | null;
+  rerankScore: number | null;
+  matchedBy: NoteChannel[];
   lastValidated: number | null;
   createdAt: number | null;
   aboutNodes: Array<{ id: string; name: string | null; filePath: string | null }>;
@@ -280,6 +233,8 @@ interface PheromonesSection {
 
 export interface QuerySignalsInput {
   projectIds: string[];
+  /** The codebases among projectIds; notes anchored to code they match are recalled too. */
+  codebaseProjectIds?: string[];
   query: string;
   sources?: Source[];
   limitPerSource?: number;
@@ -413,6 +368,7 @@ export const runQuerySignals = async (
 ): Promise<QuerySignalsResponse> => {
   const {
     projectIds,
+    codebaseProjectIds = [],
     query,
     sources = ['code', 'notes', 'pheromones'],
     limitPerSource = 5,
@@ -458,8 +414,9 @@ export const runQuerySignals = async (
     if (!embedding) return { results: [], count: 0, skipped: 'embedding-provider-unavailable' };
 
     const tStart = Date.now();
-    const rows = await searchCodeRaw(neo4jService, {
+    const rows = await searchCodeHybrid(neo4jService, {
       projectIds,
+      query,
       embedding,
       limit: limitPerSource,
       minSimilarity: codeMinSimilarity,
@@ -481,15 +438,17 @@ export const runQuerySignals = async (
 
     // 0008: if embedder unavailable, fall back to Cypher-only (recent notes)
     const limit = Math.floor(limitPerSource);
-    const rows =
+    const rows: Record<string, unknown>[] =
       embeddingsHealthy && embedding
-        ? await runProjectFilteredSearch(neo4jService, VECTOR_INDEXES.sessionNotes, VECTOR_SEARCH_NOTES_FOR_SIGNALS, {
+        ? await searchSessionNotes(neo4jService, {
             projectIds,
-            limit,
-            candidates: NOTE_CANDIDATES_PER_PROJECT,
-            sinceMs,
+            codebaseProjectIds,
+            query,
             queryEmbedding: embedding,
+            limit,
             minSimilarity: noteMinSimilarity,
+            minSimilarityRequested: minSimilarity !== undefined,
+            filters: { ...NO_NOTE_FILTERS, sinceMs },
           })
         : await neo4jService.run(RECENT_NOTES_FOR_SIGNALS, { projectIds, limit, sinceMs });
     latencies.notes = Date.now() - tStart;
@@ -503,6 +462,8 @@ export const runQuerySignals = async (
       category: (row.category as string) ?? null,
       severity: (row.severity as string) ?? null,
       relevance: row.relevance != null ? Math.round((row.relevance as number) * 1000) / 1000 : null,
+      rerankScore: row.rerankScore != null ? Math.round((row.rerankScore as number) * 1000) / 1000 : null,
+      matchedBy: Array.isArray(row.matchedBy) ? (row.matchedBy as NoteChannel[]) : [],
       lastValidated: toNumberOrNull(row.lastValidated),
       createdAt: toNumberOrNull(row.createdAt),
       aboutNodes: ((row.aboutNodes as Array<{ id?: string; name?: string; filePath?: string } | null>) ?? [])
@@ -674,6 +635,9 @@ export const createQuerySignalsTool = (server: McpServer): void => {
         const response = await concurrency(() =>
           runQuerySignals(neo4jService, {
             projectIds: [...resolvedProjects.keys()],
+            codebaseProjectIds: [...resolvedProjects.values()]
+              .filter((project) => project.kind === 'codebase')
+              .map((project) => project.projectId),
             query: input.query,
             sources: input.sources as Source[] | undefined,
             limitPerSource: input.limitPerSource,

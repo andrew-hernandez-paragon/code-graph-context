@@ -79,6 +79,10 @@ def load_model():
         dims = len(test[0])
         logger.info(f"Warmup complete: {dims} dimensions, device={device}")
         logger.info(f"Sidecar ready (pid={os.getpid()})")
+        if rerank_model_name.lower() not in RERANK_DISABLED:
+            # Load (and on first run download) the reranker off the startup path; a rerank
+            # request that arrives first waits on the lock, and the client falls back if it times out.
+            threading.Thread(target=_warm_reranker, daemon=True).start()
     except Exception as e:
         logger.error(f"Failed to load model: {e}", exc_info=True)
         raise
@@ -121,6 +125,70 @@ async def embed(req: EmbedRequest):
         )
     except Exception as e:
         logger.error(f"Embedding error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _mark_embed_activity()
+
+
+class RerankRequest(BaseModel):
+    query: str
+    texts: list[str]
+
+
+class RerankResponse(BaseModel):
+    scores: list[float]
+    model: str
+
+
+reranker = None
+reranker_lock = threading.Lock()
+rerank_model_name = os.environ.get("RERANK_MODEL", "").strip() or "BAAI/bge-reranker-base"
+RERANK_DISABLED = {"none", "off", "false", "0"}
+
+
+def _load_reranker():
+    """Load the cross-encoder on first use, so a server that never reranks never pays its memory."""
+    global reranker
+    with reranker_lock:
+        if reranker is None:
+            from sentence_transformers import CrossEncoder
+
+            logger.info(f"Loading reranker {rerank_model_name} on {model.device}...")
+            reranker = CrossEncoder(rerank_model_name, device=str(model.device), max_length=512)
+            logger.info("Reranker loaded")
+    return reranker
+
+
+def _warm_reranker():
+    try:
+        _load_reranker()
+    except Exception as e:
+        logger.error(f"Reranker failed to load: {e}", exc_info=True)
+
+
+@app.post("/rerank", response_model=RerankResponse)
+def rerank(req: RerankRequest):
+    """Score each text against the query with a cross-encoder; scores are probabilities from 0 to 1."""
+    if rerank_model_name.lower() in RERANK_DISABLED:
+        raise HTTPException(status_code=404, detail="Reranking is disabled (RERANK_MODEL)")
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    if not req.texts:
+        return RerankResponse(scores=[], model=rerank_model_name)
+
+    _mark_embed_activity()
+    start = time.time()
+    try:
+        import torch
+
+        with torch.no_grad():
+            scores = _load_reranker().predict(
+                [(req.query, text) for text in req.texts], batch_size=16, show_progress_bar=False
+            )
+        logger.info(f"Reranked {len(req.texts)} texts in {time.time() - start:.2f}s")
+        return RerankResponse(scores=[float(s) for s in scores], model=rerank_model_name)
+    except Exception as e:
+        logger.error(f"Rerank error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         _mark_embed_activity()

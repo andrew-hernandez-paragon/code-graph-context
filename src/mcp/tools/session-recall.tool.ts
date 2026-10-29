@@ -17,19 +17,11 @@ import {
 import { NOTE_CATEGORIES, NOTE_SEVERITIES } from '../../core/session/note-vocabulary.js';
 import { toNumberOrNull } from '../../core/utils/shared-utils.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
-import {
-  NOTE_CANDIDATES_PER_PROJECT,
-  nearestNeighborsInProjects,
-  nearestNeighborsPerRow,
-  runProjectFilteredSearch,
-} from '../../storage/neo4j/project-vector-search.js';
+import { nearestNeighborsInProjects, runProjectFilteredSearch } from '../../storage/neo4j/project-vector-search.js';
 import { VECTOR_INDEXES } from '../../storage/neo4j/vector-indexes.js';
 import { TOOL_NAMES, TOOL_METADATA, PROJECT_ID_DESCRIPTION } from '../constants.js';
-import {
-  NOTE_ABOUT_NODES_CLAUSE,
-  NOTE_NOT_EXPIRED_CLAUSE,
-  NOTE_NOT_SUPERSEDED_CLAUSE,
-} from '../handlers/session-note-query-clauses.js';
+import { ABOUT_NODES_COLUMN, NOTE_COLUMNS, NOTE_FILTERS, searchSessionNotes } from '../handlers/note-search.js';
+import { NOTE_ABOUT_NODES_CLAUSE } from '../handlers/session-note-query-clauses.js';
 import {
   createEmptyResponse,
   createErrorResponse,
@@ -56,23 +48,6 @@ const BOOKMARK_COLUMNS = `
          b.metadata AS metadata,
          b.createdAt AS createdAt,
          b.updatedAt AS updatedAt`;
-
-const NOTE_COLUMNS = `
-    n.id AS id,
-    n.projectId AS projectId,
-    n.topic AS topic,
-    n.content AS content,
-    n.category AS category,
-    n.severity AS severity,
-    n.agentId AS agentId,
-    n.sessionId AS sessionId,
-    n.createdAt AS createdAt,
-    n.expiresAt AS expiresAt,
-    n.lastValidated AS lastValidated,
-    n.supersededBy AS supersededBy,
-    coalesce(n.aboutNodeIds, []) AS aboutNodeIds,
-    coalesce(n.aboutPaths, []) AS aboutPaths,
-    coalesce(n.aboutPathHashes, []) AS aboutPathHashes`;
 
 /**
  * Neo4j query to find the most recent SessionBookmark matching filters
@@ -131,70 +106,6 @@ export const GET_BOOKMARK_WORKING_SET_QUERY = `
          target.endLine AS endLine
   ORDER BY target.filePath, target.startLine
 `;
-
-const NOTE_FILTERS = `
-    ${NOTE_NOT_EXPIRED_CLAUSE}
-    AND ($category IS NULL OR n.category = $category)
-    AND ($severity IS NULL OR n.severity = $severity)
-    AND ($sessionId IS NULL OR n.sessionId = $sessionId)
-    AND ($agentId IS NULL OR n.agentId = $agentId)
-    AND ($includeSuperseded OR ${NOTE_NOT_SUPERSEDED_CLAUSE})`;
-
-const ABOUT_NODES_COLUMN = `collect(DISTINCT {id: codeNode.id, name: codeNode.name, filePath: codeNode.filePath, projectId: codeNode.projectId}) AS aboutNodes`;
-
-const notePool = (index: typeof VECTOR_INDEXES.sessionNotes | typeof VECTOR_INDEXES.sessionNoteChunks, node: string) =>
-  nearestNeighborsPerRow({
-    index,
-    node,
-    score: 'score',
-    queryVector: '$queryEmbedding',
-    neighbors: String(NOTE_CANDIDATES_PER_PROJECT),
-    projectIds: '$projectIds',
-    outerVariables: [],
-  });
-
-// Return the parent once, using its strongest direct or chunk match.
-const buildNoteSearchQuery = (): string => `CYPHER 25
-  CALL () {
-    ${notePool(VECTOR_INDEXES.sessionNotes, 'note')}
-    RETURN note AS n, score
-    UNION ALL
-    ${notePool(VECTOR_INDEXES.sessionNoteChunks, 'chunk')}
-    MATCH (chunk)-[:PART_OF]->(parent:SessionNote)
-    RETURN parent AS n, score
-  }
-
-  WITH n, max(score) AS score
-  WHERE score >= $minSimilarity
-    AND ${NOTE_FILTERS}
-  WITH n, score
-  ORDER BY score DESC,
-           n.lastValidated DESC,
-           CASE n.severity
-             WHEN 'critical' THEN 0
-             WHEN 'warning'  THEN 1
-             ELSE 2
-           END
-  LIMIT toInteger($limit)
-  ${NOTE_ABOUT_NODES_CLAUSE}
-
-  RETURN ${NOTE_COLUMNS},
-    score AS relevance,
-    ${ABOUT_NODES_COLUMN}
-  ORDER BY score DESC,
-           n.lastValidated DESC,
-           CASE n.severity
-             WHEN 'critical' THEN 0
-             WHEN 'warning'  THEN 1
-             ELSE 2
-           END
-`;
-
-export const searchSessionNotes = (
-  neo4jService: Pick<Neo4jService, 'run'>,
-  params: Record<string, unknown>,
-): Promise<any[]> =>
-  runProjectFilteredSearch(neo4jService, VECTOR_INDEXES.sessionNotes, buildNoteSearchQuery(), params);
 
 /**
  * Filter-based (non-semantic) search for session notes.
@@ -403,27 +314,32 @@ export const createSessionRecallTool = (server: McpServer): void => {
         // Fetch notes, semantic if query provided, filter-based otherwise
         let rawNotes: any[];
 
-        if (queryEmbedding) {
+        const filters = {
+          category: category ?? null,
+          severity: severity ?? null,
+          sessionId: sessionId ?? null,
+          agentId: agentId ?? null,
+          sinceMs: null,
+          includeSuperseded,
+        };
+        if (query && queryEmbedding) {
           rawNotes = await searchSessionNotes(neo4jService, {
             projectIds: resolvedProjectIds,
+            codebaseProjectIds: projectsResult.projects
+              .filter((project) => project.kind === 'codebase')
+              .map((project) => project.projectId),
+            query,
             queryEmbedding,
             limit: Math.floor(limit),
             minSimilarity,
-            category: category ?? null,
-            severity: severity ?? null,
-            sessionId: sessionId ?? null,
-            agentId: agentId ?? null,
-            includeSuperseded,
+            minSimilarityRequested: requestedMinSimilarity !== undefined,
+            filters,
           });
         } else {
           rawNotes = await neo4jService.run(FILTER_SEARCH_NOTES_QUERY, {
             projectIds: resolvedProjectIds,
             limit: Math.floor(limit),
-            category: category ?? null,
-            severity: severity ?? null,
-            sessionId: sessionId ?? null,
-            agentId: agentId ?? null,
-            includeSuperseded,
+            ...filters,
           });
         }
 
@@ -448,6 +364,8 @@ export const createSessionRecallTool = (server: McpServer): void => {
               category: row.category,
               severity: row.severity,
               relevance: row.relevance != null ? Math.round(row.relevance * 1000) / 1000 : null,
+              rerankScore: row.rerankScore != null ? Math.round(row.rerankScore * 1000) / 1000 : null,
+              matchedBy: row.matchedBy ?? [],
               agentId: row.agentId,
               sessionId: row.sessionId,
               createdAt: toNumberOrNull(row.createdAt),

@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
+import { ANCHORED_NOTES_QUERY } from '../handlers/anchored-notes.js';
+import { CODE_NOTE_CANDIDATES_QUERY, NOTE_ROWS_QUERY, VECTOR_NOTE_CANDIDATES_QUERY } from '../handlers/note-search.js';
 import {
   FILTER_SEARCH_NOTES_QUERY,
   FIND_BOOKMARK_QUERY,
   VECTOR_SEARCH_BOOKMARKS_QUERY,
-  searchSessionNotes,
 } from '../tools/session-recall.tool.js';
 import { CREATE_BOOKMARK_QUERY, CREATE_SESSION_NOTE_QUERY } from '../tools/session-save.tool.js';
 import { RECREATE_NOTE_ABOUT_EDGES_QUERY } from '../tools/session-update.tool.js';
@@ -57,22 +58,52 @@ describe.skipIf(process.env.CGC_NEO4J_TESTS !== '1')('session memory queries in 
     projectIds,
     queryEmbedding: noteEmbedding,
     limit: 50,
-    minSimilarity: 0,
+    pool: 50,
     category: null,
     severity: null,
     sessionId: null,
     agentId: null,
+    sinceMs: null,
     includeSuperseded: true,
   });
 
+  const searchNotes = async (projectIds: string[]) => {
+    const candidates = await read.run(VECTOR_NOTE_CANDIDATES_QUERY, searchParams(projectIds));
+    const rows = await read.run(NOTE_ROWS_QUERY, { ids: candidates.map((row) => row.id) });
+    const scores = new Map(candidates.map((row) => [row.id, row.score]));
+    return rows
+      .map((row) => ({
+        id: row.id as string,
+        projectId: row.projectId as string,
+        relevance: Number(scores.get(row.id)),
+      }))
+      .sort((a, b) => b.relevance - a.relevance);
+  };
+
   it('semantic note search returns notes from the requested projects only', async () => {
-    const oneProject = await searchSessionNotes(read, searchParams([noteProjects[0]]));
+    const oneProject = await searchNotes([noteProjects[0]]);
     expect(oneProject.length).toBeGreaterThan(0);
     expect(new Set(oneProject.map((row) => row.projectId))).toEqual(new Set([noteProjects[0]]));
 
-    const both = await searchSessionNotes(read, searchParams(noteProjects));
+    const both = await searchNotes(noteProjects);
     expect(new Set(both.map((row) => row.projectId))).toEqual(new Set(noteProjects));
     expect(both[0].relevance).toBeGreaterThan(0.99);
+  });
+
+  it('finds notes anchored to the files a code search matched, ranked by file', async () => {
+    const [anchored] = await read.run(
+      `MATCH (n:SessionNote)-[:ABOUT]->(t) WHERE t.filePath IS NOT NULL AND n.supersededBy IS NULL
+       RETURN n.id AS id, n.projectId AS projectId, t.filePath AS filePath, t.id AS nodeId LIMIT 1`,
+    );
+    const rows = await read.run(CODE_NOTE_CANDIDATES_QUERY, {
+      ...searchParams([anchored.projectId]),
+      files: ['/no/such/file.ts', anchored.filePath],
+    });
+    expect(rows.map((row) => row.id)).toContain(anchored.id);
+    expect(rows.every((row) => Number(row.rank) === 1)).toBe(true);
+
+    const notes = await read.run(ANCHORED_NOTES_QUERY, { nodeIds: [anchored.nodeId], files: [] });
+    expect(notes.map((row) => row.id)).toContain(anchored.id);
   });
 
   it('filter mode returns notes from the requested projects with their anchors', async () => {
@@ -80,8 +111,8 @@ describe.skipIf(process.env.CGC_NEO4J_TESTS !== '1')('session memory queries in 
     expect(rows.length).toBeGreaterThan(0);
     expect(new Set(rows.map((row) => row.projectId))).toEqual(new Set(noteProjects));
     for (const row of rows) {
-      expect(row.aboutPaths).toEqual([]);
-      expect(row.aboutPathHashes).toEqual([]);
+      expect(Array.isArray(row.aboutPaths)).toBe(true);
+      expect(row.aboutPathHashes).toHaveLength(row.aboutPaths.length);
     }
   });
 

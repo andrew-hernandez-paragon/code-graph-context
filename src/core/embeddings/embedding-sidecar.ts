@@ -23,6 +23,9 @@ export interface SidecarConfig {
   idleTimeoutS: number;
 }
 
+/** A rerank waits on the recall that asked for it, so it gets far less time than a bulk embed. */
+const RERANK_TIMEOUT_MS = parseInt(process.env.RERANK_TIMEOUT_MS ?? '', 10) || 15_000;
+
 export const DEFAULT_SIDECAR_CONFIG: SidecarConfig = {
   port: parseInt(process.env.EMBEDDING_SIDECAR_PORT ?? '', 10) || 8787,
   host: '127.0.0.1',
@@ -374,6 +377,49 @@ export class EmbeddingSidecar {
     } finally {
       clearTimeout(timeout);
       this.releaseSlot(); // always release, even on error
+    }
+  }
+
+  /**
+   * Score each text against the query with the sidecar's cross-encoder, from 0 to 1.
+   * Returns null when no score is available: a sidecar from before /rerank, reranking
+   * disabled, or a failed request. Callers keep their own order then.
+   */
+  async rerank(query: string, texts: string[]): Promise<number[] | null> {
+    if (texts.length === 0) return [];
+    try {
+      await this.start();
+    } catch (err) {
+      console.error(`[embedding-sidecar] Rerank skipped, sidecar unavailable: ${String(err)}`);
+      return null;
+    }
+    await this.acquireSlot();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RERANK_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${this.baseUrl}/rerank`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, texts }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.error(`[embedding-sidecar] Rerank unavailable: status=${res.status}, ${await res.text()}`);
+        return null;
+      }
+      const data = (await res.json()) as { scores?: unknown };
+      const scores = data.scores;
+      if (!Array.isArray(scores) || scores.length !== texts.length || scores.some((s) => typeof s !== 'number')) {
+        console.error('[embedding-sidecar] Rerank returned an inconsistent score list');
+        return null;
+      }
+      return scores as number[];
+    } catch (err) {
+      console.error(`[embedding-sidecar] Rerank failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      this.releaseSlot();
     }
   }
 

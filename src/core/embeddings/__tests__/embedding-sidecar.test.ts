@@ -201,3 +201,25 @@ describe('readIdleTimeoutS', () => {
     expect(readIdleTimeoutS()).toBe(expected);
   });
 });
+
+describe('sidecar rerank', () => {
+  it('returns one score per text from a sidecar that reranks', async () => {
+    fetchMock.mockResolvedValueOnce(health()).mockResolvedValueOnce(response({ scores: [0.9, 0.1], model: 'r' }));
+    const sidecar = new EmbeddingSidecar({ model });
+
+    expect(await sidecar.rerank('q', ['a', 'b'])).toEqual([0.9, 0.1]);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ query: 'q', texts: ['a', 'b'] });
+  });
+
+  it('returns null, so the caller keeps its own order, from a sidecar without /rerank', async () => {
+    fetchMock.mockResolvedValueOnce(health()).mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+    expect(await new EmbeddingSidecar({ model }).rerank('q', ['a'])).toBeNull();
+  });
+
+  it('returns null when the score list does not match the texts', async () => {
+    fetchMock.mockResolvedValueOnce(health()).mockResolvedValueOnce(response({ scores: [0.9] }));
+
+    expect(await new EmbeddingSidecar({ model }).rerank('q', ['a', 'b'])).toBeNull();
+  });
+});

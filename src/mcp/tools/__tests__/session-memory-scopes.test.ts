@@ -215,30 +215,45 @@ describe('session_recall', () => {
   beforeEach(() => {
     vi.stubEnv('OPENAI_EMBEDDINGS_ENABLED', 'false');
     vi.stubEnv('EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5');
+    vi.stubEnv('RERANK_MODEL', 'none');
   });
+
+  /** Vector candidates at these scores, with no keyword or code match, so only the vector floor decides. */
+  const withVectorCandidates = (scores: Record<string, number>) =>
+    run.mockImplementation(async (query: string, params: Record<string, any>) => {
+      if (query.includes('VECTOR INDEX session_notes_idx')) {
+        return Object.entries(scores).map(([id, score]) => ({ id, score }));
+      }
+      if (query.includes('WHERE n.id IN $ids')) {
+        return params.ids.map((id: string) => ({ id, projectId: 'proj_code', topic: id, content: '', aboutPaths: [] }));
+      }
+      return fakeRun(query, params);
+    });
+
+  const recalledIds = async (input: Record<string, unknown>) =>
+    (resultJson(await recall(input)).notes ?? []).map((note: { id: string }) => note.id);
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it('searches notes at the calibrated floor and bookmarks at the uncalibrated one when minSimilarity is absent', async () => {
-    await recall({ projectId: 'proj_code', query: 'retry cap' });
+  it('holds vector-only notes to the calibrated floor and bookmarks to the uncalibrated one when minSimilarity is absent', async () => {
+    withVectorCandidates({ above: 0.81, below: 0.79 });
 
-    expect(callsTo('VECTOR INDEX session_notes_idx')[0][1].minSimilarity).toBe(0.8);
+    expect(await recalledIds({ projectId: 'proj_code', query: 'retry cap' })).toEqual(['above']);
     expect(callsTo('VECTOR INDEX session_bookmarks_idx')[0][1].minSimilarity).toBe(0.3);
   });
 
-  it('searches at the long-standing default under a model with no calibration', async () => {
+  it('holds them to the long-standing default under a model with no calibration', async () => {
     vi.stubEnv('EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2');
+    withVectorCandidates({ above: 0.31, below: 0.29 });
 
-    await recall({ projectId: 'proj_code', query: 'retry cap' });
-
-    expect(callsTo('VECTOR INDEX session_notes_idx')[0][1].minSimilarity).toBe(0.3);
+    expect(await recalledIds({ projectId: 'proj_code', query: 'retry cap' })).toEqual(['above']);
   });
 
-  it('searches at the caller minSimilarity when one is given', async () => {
-    await recall({ projectId: 'proj_code', query: 'retry cap', minSimilarity: 0.55 });
+  it('holds them to the caller minSimilarity when one is given', async () => {
+    withVectorCandidates({ above: 0.56, below: 0.54 });
 
-    expect(callsTo('VECTOR INDEX session_notes_idx')[0][1].minSimilarity).toBe(0.55);
+    expect(await recalledIds({ projectId: 'proj_code', query: 'retry cap', minSimilarity: 0.55 })).toEqual(['above']);
   });
 
   it('says no note was close enough and how to see weaker matches when a query finds nothing', async () => {

@@ -160,7 +160,7 @@ const initializeNeo4jDependentServices = async (): Promise<void> => {
   // Runs every startup so an existing graph gains the lexical channel on
   // upgrade; Neo4j backfills it from the :Embedded nodes already stored, so
   // no reparse and no re-embed is needed.
-  await ensureCodeFulltextIndex();
+  await ensureFulltextIndexes();
 
   // Graphs parsed before these indexes existed only get them here, not from a reparse.
   await ensureCodeNodeLookupIndexes();
@@ -286,26 +286,31 @@ const migrateSessionNoteProperties = async (): Promise<void> => {
 };
 
 /**
- * Create the code fulltext index if it is not already there (0014).
+ * Create the code and note fulltext indexes if they are not already there.
  *
  * Separate from GraphGeneratorHandler.ensureIndexes, which only runs on parse:
- * an existing user upgrading gets the lexical channel on the next server start
+ * an existing user upgrading gets the keyword channels on the next server start
  * without having to reparse anything.
  *
- * Failure is non-fatal. searchCodeLexical returns [] when the index is missing,
+ * Failure is non-fatal. Each keyword search returns [] when its index is missing,
  * so search falls back to vector-only rather than erroring.
  */
-const ensureCodeFulltextIndex = async (): Promise<void> => {
-  try {
-    const neo4jService = new Neo4jService();
+const ensureFulltextIndexes = async (): Promise<void> => {
+  for (const [name, query] of [
+    ['code', QUERIES.CREATE_EMBEDDED_FULLTEXT_INDEX],
+    ['note', QUERIES.CREATE_SESSION_NOTES_FULLTEXT_INDEX],
+  ] as const) {
     try {
-      await neo4jService.run(QUERIES.CREATE_EMBEDDED_FULLTEXT_INDEX);
-      await debugLog('Code fulltext index ensured');
-    } finally {
-      await neo4jService.close();
+      const neo4jService = new Neo4jService();
+      try {
+        await neo4jService.run(query);
+        await debugLog(`${name} fulltext index ensured`);
+      } finally {
+        await neo4jService.close();
+      }
+    } catch (error) {
+      await debugLog(`Failed to ensure ${name} fulltext index`, error);
     }
-  } catch (error) {
-    await debugLog('Failed to ensure code fulltext index', error);
   }
 };
 

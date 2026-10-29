@@ -42,3 +42,19 @@ export const getEmbeddingDimensions = (): number =>
   EMBEDDING_DIMENSIONS[getEmbeddingModel()] ?? (isOpenAIEnabled() ? 3072 : 1536);
 
 export const getNoteRecallFloor = (): number => NOTE_RECALL_FLOORS[getEmbeddingModel()] ?? UNCALIBRATED_RECALL_FLOOR;
+
+export const DEFAULT_RERANK_MODEL = 'BAAI/bge-reranker-base';
+
+// Reranker score floors for note recall; scores are probabilities from 0 to 1. Calibration:
+// docs/code-graph-context/research/recall-v2.md. An uncalibrated model keeps every reranked note.
+export const NOTE_RERANK_FLOORS: Record<string, number> = {
+  'BAAI/bge-reranker-base': 0.02,
+};
+
+export const getRerankModel = (): string => process.env.RERANK_MODEL?.trim() || DEFAULT_RERANK_MODEL;
+
+/** The reranker runs in the local sidecar, so it is off with OpenAI embeddings and when RERANK_MODEL disables it. */
+export const isRerankEnabled = (): boolean =>
+  !isOpenAIEnabled() && !['none', 'off', 'false', '0'].includes(getRerankModel().toLowerCase());
+
+export const getNoteRerankFloor = (): number => NOTE_RERANK_FLOORS[getRerankModel()] ?? 0;

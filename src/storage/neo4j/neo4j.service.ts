@@ -231,6 +231,16 @@ export const QUERIES = {
   }}
 `,
 
+  // The keyword channel of note recall. Same analyzer as the code index, so a symbol name in a
+  // note matches the way it does in code.
+  CREATE_SESSION_NOTES_FULLTEXT_INDEX: `
+  CREATE FULLTEXT INDEX session_notes_fts_idx IF NOT EXISTS
+  FOR (n:SessionNote) ON EACH [n.topic, n.content]
+  OPTIONS {indexConfig: {
+    \`fulltext.analyzer\`: 'standard-no-stop-words'
+  }}
+`,
+
   CREATE_SESSION_NOTES_VECTOR_INDEX: (dimensions: number) =>
     createProjectFilteredVectorIndexQuery(VECTOR_INDEXES.sessionNotes, dimensions),
 
