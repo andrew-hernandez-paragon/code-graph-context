@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.2] - Recall Floor and Sidecar Hang - 2026-10-29
+
+### Fixed
+
+- **The embedding sidecar no longer hangs after about 1000 requests.** The server started it with stdout piped but never read it, and uvicorn writes an access line per request there. Once the pipe filled, the sidecar blocked, each request waited out the 120 s timeout, and the server restarted it. A busy session (each recall also calls `/rerank` since 5.8.0) hit this sooner. stdout is now ignored. (`src/core/embeddings/embedding-sidecar.ts`)
+- **Note recall drops fewer relevant notes.** The reranker floor for `BAAI/bge-reranker-base` is 0.001 instead of 0.02. The cross-encoder scores a note low when it mentions the asked fact in passing, so 0.02 dropped 28% of the evidence on LongMemEval and returned 1.5 notes per recall. With 0.001, all evidence reaches the top 5 for 0.90 of LongMemEval S questions instead of 0.71, and 0.85 instead of 0.73 on a 100-question sample of M. On the 48 labeled recall queries, recall of relevant notes rises from 0.61 to 0.63 and precision falls from 0.44 to 0.40. Method and numbers: `docs/code-graph-context/research/longmemeval-2026-10.md` in the owner's docs tree. (`src/core/embeddings/embedding-config.ts`)
+
 ## [5.8.1] - Recall Tuning - 2026-10-29
 
 ### Changed

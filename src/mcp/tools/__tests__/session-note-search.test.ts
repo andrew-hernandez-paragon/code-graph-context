@@ -65,7 +65,7 @@ describe('note search', () => {
     expect(fused[1]).toMatchObject({ channels: ['keyword'], vectorScore: null });
   });
 
-  it('orders by reranker score and cuts at the calibrated floor', async () => {
+  it('orders by reranker score and keeps low scorers when the best note clears the floor', async () => {
     const neo4j = stubNeo4j(
       [
         { id: 'a', score: 0.9 },
@@ -83,8 +83,16 @@ describe('note search', () => {
     expect(rows.map((row) => [row.id, row.rerankScore, row.matchedBy])).toEqual([
       ['c', 0.6, ['keyword']],
       ['b', 0.3, ['vector']],
+      ['a', 0.0005, ['vector']],
     ]);
     expect(rows[1].relevance).toBe(0.82);
+  });
+
+  it('returns nothing when even the best reranked note is under the floor', async () => {
+    const neo4j = stubNeo4j([{ id: 'a', score: 0.9 }], ['c']);
+    const rerank = vi.fn().mockResolvedValue([0.0008, 0.0002]);
+    const rows = await searchSessionNotes(neo4j, options({ rerank }));
+    expect(rows).toEqual([]);
   });
 
   it('without a reranker keeps keyword matches and holds vector-only matches to minSimilarity', async () => {

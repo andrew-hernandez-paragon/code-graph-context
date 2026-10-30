@@ -276,8 +276,10 @@ export const fuseNoteChannels = (
 };
 
 /**
- * Orders and cuts the fused candidates. With reranker scores, the reranker orders them and its
- * calibrated floor cuts them, unless the caller set minSimilarity. Without scores, or when the caller
+ * Orders and cuts the fused candidates. With reranker scores, the reranker orders them, and recall
+ * returns nothing when even the best scores under the calibrated floor; otherwise the top `limit` stand,
+ * because the reranker scores a note low when it mentions the fact only in passing. That holds unless
+ * the caller set minSimilarity. Without scores, or when the caller
  * set minSimilarity, a note only the vector channel found must reach minSimilarity; a keyword or code
  * match is kept on its rank, because BM25 and file rank have no comparable floor.
  */
@@ -293,15 +295,17 @@ export const rankNoteCandidates = <C extends Candidate>(
 ): (C & { rerankScore: number | null })[] => {
   const passesVectorFloor = (candidate: C) =>
     candidate.channels.some((channel) => channel !== 'vector') || (candidate.vectorScore ?? 0) >= minSimilarity;
-  const ranked = scores
-    ? candidates
-        .map((candidate, i) => ({ ...candidate, rerankScore: scores[i] }))
-        .sort((a, b) => b.rerankScore - a.rerankScore)
-        .filter((candidate) =>
-          minSimilarityRequested ? passesVectorFloor(candidate) : candidate.rerankScore >= rerankFloor,
-        )
-    : candidates.map((candidate) => ({ ...candidate, rerankScore: null })).filter(passesVectorFloor);
-  return ranked.slice(0, limit);
+  if (!scores) {
+    return candidates
+      .map((candidate) => ({ ...candidate, rerankScore: null }))
+      .filter(passesVectorFloor)
+      .slice(0, limit);
+  }
+  const reranked = candidates
+    .map((candidate, i) => ({ ...candidate, rerankScore: scores[i] }))
+    .sort((a, b) => b.rerankScore - a.rerankScore);
+  if (minSimilarityRequested) return reranked.filter(passesVectorFloor).slice(0, limit);
+  return (reranked[0]?.rerankScore ?? 0) >= rerankFloor ? reranked.slice(0, limit) : [];
 };
 
 export const searchSessionNotes = async (
