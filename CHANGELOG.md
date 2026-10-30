@@ -5,12 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.8.2] - Recall Floor and Sidecar Hang - 2026-10-29
+## [5.8.2] - Recall Floor and Sidecar Hang - 2026-10-30
 
 ### Fixed
 
 - **The embedding sidecar no longer hangs after about 1000 requests.** The server started it with stdout piped but never read it, and uvicorn writes an access line per request there. Once the pipe filled, the sidecar blocked, each request waited out the 120 s timeout, and the server restarted it. A busy session (each recall also calls `/rerank` since 5.8.0) hit this sooner. stdout is now ignored. (`src/core/embeddings/embedding-sidecar.ts`)
-- **Note recall drops fewer relevant notes.** The reranker floor for `BAAI/bge-reranker-base` is 0.001 instead of 0.02. The cross-encoder scores a note low when it mentions the asked fact in passing, so 0.02 dropped 28% of the evidence on LongMemEval and returned 1.5 notes per recall. With 0.001, all evidence reaches the top 5 for 0.90 of LongMemEval S questions instead of 0.71, and 0.85 instead of 0.73 on a 100-question sample of M. On the 48 labeled recall queries, recall of relevant notes rises from 0.61 to 0.63 and precision falls from 0.44 to 0.40. Method and numbers: `docs/code-graph-context/research/longmemeval-2026-10.md` in the owner's docs tree. (`src/core/embeddings/embedding-config.ts`)
+- **Note recall drops fewer relevant notes.** The reranker floor now applies only to the best note: recall returns nothing when even the best scores under 0.001 (`BAAI/bge-reranker-base`), and otherwise the top notes by reranker score. The cross-encoder scores a note low when it mentions the asked fact in passing, so the old per-note floor of 0.02 dropped 28% of the evidence on LongMemEval and returned 1.5 notes per recall. On LongMemEval S, the server's default recall now puts all evidence in the top 5 for 0.93 of questions instead of 0.71, at 4.9 notes per call and a median 482 ms. On the 48 labeled recall queries, recall of relevant notes rises from 0.61 to 0.63 and precision falls from 0.44 to 0.38. Method and numbers: `docs/code-graph-context/research/longmemeval-2026-10.md` in the owner's docs tree. (`src/mcp/handlers/note-search.ts`, `src/core/embeddings/embedding-config.ts`)
 
 ## [5.8.1] - Recall Tuning - 2026-10-29
 
