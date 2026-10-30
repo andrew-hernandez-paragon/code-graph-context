@@ -73,7 +73,7 @@ describe('note search', () => {
       ],
       ['c'],
     );
-    const rerank = vi.fn().mockResolvedValue([0.6, 0.01, 0.3]);
+    const rerank = vi.fn().mockResolvedValue([0.6, 0.0005, 0.3]);
     const rows = await searchSessionNotes(neo4j, options({ rerank }));
     expect(rerank).toHaveBeenCalledWith('retry budget for flushes', [
       'topic c\ncontent c',

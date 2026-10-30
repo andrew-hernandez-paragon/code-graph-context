@@ -48,7 +48,7 @@ export const DEFAULT_RERANK_MODEL = 'BAAI/bge-reranker-base';
 // Reranker score floors for note recall; scores are probabilities from 0 to 1. Calibration:
 // docs/code-graph-context/research/recall-v2.md. An uncalibrated model keeps every reranked note.
 export const NOTE_RERANK_FLOORS: Record<string, number> = {
-  'BAAI/bge-reranker-base': 0.02,
+  'BAAI/bge-reranker-base': 0.001,
 };
 
 export const getRerankModel = (): string => process.env.RERANK_MODEL?.trim() || DEFAULT_RERANK_MODEL;
