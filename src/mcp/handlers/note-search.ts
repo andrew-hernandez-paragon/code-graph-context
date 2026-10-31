@@ -11,7 +11,7 @@
  * search finds what embeddings miss, and the reranker separates relevant notes better than cosine.
  */
 
-import { getNoteRerankFloor, isRerankEnabled } from '../../core/embeddings/embedding-config.js';
+import { isRerankEnabled } from '../../core/embeddings/embedding-config.js';
 import { getEmbeddingSidecar } from '../../core/embeddings/embedding-sidecar.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import {
@@ -113,7 +113,7 @@ export interface NoteSearchOptions {
   limit: number;
   /** Floor on the (1 + cosine) / 2 scale for notes only the vector channel found. */
   minSimilarity: number;
-  /** The caller chose minSimilarity, so it replaces the reranker's floor. */
+  /** The caller chose minSimilarity, so it also filters reranked notes. */
   minSimilarityRequested: boolean;
   filters: NoteFilters;
   rerank?: NoteReranker;
@@ -276,11 +276,10 @@ export const fuseNoteChannels = (
 };
 
 /**
- * Orders and cuts the fused candidates. With reranker scores, the reranker orders them, and recall
- * returns nothing when even the best scores under the calibrated floor; otherwise the top `limit` stand,
- * because the reranker scores a note low when it mentions the fact only in passing. That holds unless
- * the caller set minSimilarity. Without scores, or when the caller
- * set minSimilarity, a note only the vector channel found must reach minSimilarity; a keyword or code
+ * Orders and cuts the fused candidates. With reranker scores, the reranker orders them and the top `limit`
+ * stand with no score floor, because the reranker scores a note near zero when it mentions the fact only
+ * in passing. Without scores, or when the caller set minSimilarity, a note only the vector channel found
+ * must reach minSimilarity; a keyword or code
  * match is kept on its rank, because BM25 and file rank have no comparable floor.
  */
 export const rankNoteCandidates = <C extends Candidate>(
@@ -291,7 +290,6 @@ export const rankNoteCandidates = <C extends Candidate>(
     minSimilarityRequested,
     limit,
   }: Pick<NoteSearchOptions, 'minSimilarity' | 'minSimilarityRequested' | 'limit'>,
-  rerankFloor: number,
 ): (C & { rerankScore: number | null })[] => {
   const passesVectorFloor = (candidate: C) =>
     candidate.channels.some((channel) => channel !== 'vector') || (candidate.vectorScore ?? 0) >= minSimilarity;
@@ -305,7 +303,7 @@ export const rankNoteCandidates = <C extends Candidate>(
     .map((candidate, i) => ({ ...candidate, rerankScore: scores[i] }))
     .sort((a, b) => b.rerankScore - a.rerankScore);
   if (minSimilarityRequested) return reranked.filter(passesVectorFloor).slice(0, limit);
-  return (reranked[0]?.rerankScore ?? 0) >= rerankFloor ? reranked.slice(0, limit) : [];
+  return reranked.slice(0, limit);
 };
 
 export const searchSessionNotes = async (
@@ -343,7 +341,7 @@ export const searchSessionNotes = async (
     found.map(({ row }) => `${String(row.topic ?? '')}\n${String(row.content ?? '')}`.slice(0, RERANK_TEXT_CHARS)),
   );
 
-  return rankNoteCandidates(found, scores, options, getNoteRerankFloor()).map((candidate) => ({
+  return rankNoteCandidates(found, scores, options).map((candidate) => ({
     ...candidate.row,
     id: candidate.id,
     relevance: candidate.vectorScore,
