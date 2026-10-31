@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.3] - No Reranker Floor - 2026-10-31
+
+### Fixed
+
+- **Note recall no longer comes back empty when every note scores low.** 5.8.2 returned nothing when even the best note's reranker score was under 0.001. The reranker scores some relevant notes near zero, mostly for queries phrased as requests or date lookups, so recall emptied on 11 answerable LongMemEval S questions, and their answers failed. Recall now returns the top `limit` notes by reranker score. LongMemEval S answer accuracy rises from 0.880 to 0.896; unanswerable questions were already answered as unanswerable without the floor. A caller's `minSimilarity` still filters as before. Method and numbers: `docs/code-graph-context/research/longmemeval-2026-10.md` in the owner's docs tree. (`src/mcp/handlers/note-search.ts`, `src/core/embeddings/embedding-config.ts`)
+
 ## [5.8.2] - Recall Floor and Sidecar Hang - 2026-10-30
 
 ### Fixed
