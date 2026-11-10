@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.9.0] - Watcher and Blast Radius - 2026-11-10
+
+After upgrading, run one full parse of each project. The parser writes different edges, and a graph that drifted under the old watcher is only repaired by a full parse.
+
+### Fixed
+
+- **The file watcher keeps the graph equal to a fresh parse.** Each incremental parse used to re-create every edge between a changed file and the rest of the graph, so an edit added duplicate edges and a removed call or import came back. After about 20 change batches a watched graph had 306 edges a fresh parse did not (8.4%). Only edges that start in unchanged files are restored now; a changed file's own edges are what the parser produced.
+- **Callers and importers in unchanged files stay linked.** When a rename, a delete and recreate, a changed barrel or a changed `implements` clause moves what a name resolves to, the files that import it are parsed again and their edges replaced.
+- **A change that arrives during a parse is no longer skipped.** The debounce timer fired while a parse was running and nothing re-armed it, so the change sat unindexed until an unrelated later one.
+- **Starting a watcher no longer deletes config-file nodes** (`package.json`, `tsconfig.json`), and edits to paths the parser never indexes no longer trigger a parse.
+- **A failed incremental parse keeps the file's old nodes.** The old subgraph was deleted before the parse ran, so a file that vanished mid-parse (a fast branch switch) lost its nodes.
+- **`start_watch_project` refuses a project id registered at a different path.** Pointing a project's id at another directory, such as a git worktree, would have re-created every node under a new id and made every anchored note stale.
+- **`impact_analysis` finds users of a re-exported symbol.** A file that imports a name through `export * from`, `export { A } from` or a chain of barrels now has an IMPORTS edge to the file that declares it. On this repo a class imported through an `index.ts` went from 1 of its 20 users found to all 20.
+- **CALLS edges follow the type checker instead of the method name.** A call whose receiver could not be resolved used to link to whichever same-named method was parsed first, so `neo4jService.run()` could point at an unrelated class. Calls now link to the declaration the checker names, and a call through an interface links to that method in each implementing class. On this repo 99 false edges went and 58 true ones were added.
+- **Imports and calls across workspace packages get edges.** In a monorepo, `@scope/pkg` resolved to built output or to nothing, so no IMPORTS edge crossed a package and cross-package CALLS were name guesses. A workspace parse now maps each package name to its source entry. On a 36-package workspace this added 2,123 cross-package IMPORTS edges and replaced 1,352 guessed CALLS edges with about 820 resolved ones.
+- **Parallel workspace parses keep each call's context**, so calls no longer land in the wrong package.
+
+### Changed
+
+- **`impact_analysis` defaults to `maxDepth` 2** (was 4). Depth 2 found the same true users on every symbol measured, with fewer false ones; pass up to 6 for a wider search.
+
+### Added
+
+- **`session_recall` takes `includeBookmark`** (default true). With false, recall skips the bookmark lookup and leaves `bookmark`, `workingSet` and `staleNodeIds` out of the response, for callers that only want notes.
+
+### Known limits
+
+- Under a watcher, a config file that is added or edited is refreshed only by a full parse, and in a workspace the watcher also indexes TypeScript files outside workspace packages, which a full parse skips.
+- Pattern subpaths (`"./*"`) in a package's `exports` are not mapped to source.
+
 ## [5.8.3] - No Reranker Floor - 2026-10-31
 
 ### Fixed
