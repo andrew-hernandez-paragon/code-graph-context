@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { ProjectService } from '../../core/projects/index.js';
 import { Neo4jService } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA } from '../constants.js';
+import { registeredPathMismatch } from '../handlers/incremental-parse.handler.js';
 import { watchManager } from '../services/watch-manager.js';
 import { createErrorResponse, createSuccessResponse, debugLog } from '../utils.js';
 
@@ -75,13 +76,8 @@ export const createStartWatchProjectTool = (server: McpServer): void => {
         let projectId: string;
         try {
           const project = await new ProjectService(neo4jService).findCodebase(args.projectId ?? resolvedProjectPath);
-          if (!args.projectId && (project.path === null || resolve(project.path) !== resolvedProjectPath)) {
-            return createErrorResponse(
-              new Error(
-                `Project path ${resolvedProjectPath} is not the root of codebase '${project.name}' (${project.projectId}), which is at ${project.path}. Pass that root as projectPath.`,
-              ),
-            );
-          }
+          const mismatch = registeredPathMismatch(project, resolvedProjectPath);
+          if (mismatch) return createErrorResponse(new Error(mismatch));
           projectId = project.projectId;
         } finally {
           await neo4jService.close();

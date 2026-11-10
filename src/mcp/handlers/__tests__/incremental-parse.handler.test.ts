@@ -168,6 +168,16 @@ describe('performIncrementalParse', () => {
     expect(result).toEqual({ nodesUpdated: 0, edgesUpdated: 0, filesReparsed: 0, filesDeleted: 1 });
   });
 
+  it('refuses a project registered at another directory before it reads or changes the graph', async () => {
+    stubGraph([{ ...trackingRow('caller.ts'), contentHash: 'stale' }], '/work/elsewhere');
+
+    await expect(performIncrementalParse(root, PROJECT_ID, join(root, 'tsconfig.json'))).rejects.toThrow(
+      `Codebase 'lab' (proj_lab) is registered at /work/elsewhere, not ${root}.`,
+    );
+
+    expect(calls.map((call) => call.query)).toEqual([FIND_BY_ID_QUERY]);
+  });
+
   it('leaves the graph untouched when no file changed', async () => {
     stubGraph([trackingRow('service.ts'), trackingRow('decoy.ts'), trackingRow('caller.ts')]);
 
