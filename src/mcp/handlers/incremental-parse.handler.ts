@@ -58,9 +58,9 @@ export interface ChangedFilesGraph {
 }
 
 /**
- * Deletes the subgraphs of the files that changed or disappeared since the last parse and parses the
- * changed ones, along with the unchanged files that import a declaration the graph has not held before.
- * The caller imports `nodes` and `edges`, then restores `incomingEdges`.
+ * Parses the files that changed since the last parse, along with the unchanged files that import a
+ * declaration the graph has not held before, then deletes the subgraphs of the files that changed or
+ * disappeared. The caller imports `nodes` and `edges`, then restores `incomingEdges`.
  */
 export const reparseChangedFiles = async (
   parser: TypeScriptParser,
@@ -81,13 +81,16 @@ export const reparseChangedFiles = async (
     filesReparsed: 0,
     filesDeleted: filesToDelete.length,
   };
+  if (filesToReparse.length === 0) {
+    if (filesToDelete.length > 0) {
+      await deleteSourceFileSubgraphs(neo4jService, filesToDelete, projectId);
+    }
+    return nothingToImport;
+  }
   const removedFiles = [...filesToDelete, ...filesToReparse];
-  if (removedFiles.length === 0) return nothingToImport;
 
   const savedIncomingEdges = await saveIncomingEdges(neo4jService, removedFiles, projectId);
   const previousNodeIds = await loadNodeIds(neo4jService, filesToReparse, projectId);
-  await deleteSourceFileSubgraphs(neo4jService, removedFiles, projectId);
-  if (filesToReparse.length === 0) return nothingToImport;
 
   parser.addExistingNodesFromChunk(await loadExistingNodesForEdgeDetection(neo4jService, removedFiles, projectId));
   await parser.parseWorkspace(filesToReparse);
@@ -99,6 +102,9 @@ export const reparseChangedFiles = async (
   if (dependentFiles.size > 0) {
     await parser.parseWorkspace([...dependentFiles]);
   }
+
+  // Nothing is deleted until the parse has succeeded, so a parse that throws leaves the old subgraphs in place.
+  await deleteSourceFileSubgraphs(neo4jService, removedFiles, projectId);
 
   // A dependent file's nodes and its other edges are already in the graph. Only its edges into the
   // reparsed files are imported, in place of the ones saved from it.

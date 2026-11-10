@@ -5,6 +5,7 @@ import { join } from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TypeScriptParser } from '../../../core/parsers/typescript-parser.js';
 import { FIND_BY_ID_QUERY } from '../../../core/projects/index.js';
 import { QUERIES } from '../../../storage/neo4j/neo4j.service.js';
 import { CANDIDATE_IMPORTS_QUERY, NODE_IDS_IN_FILES_QUERY } from '../dependent-files.js';
@@ -139,6 +140,7 @@ describe('performIncrementalParse', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -252,6 +254,18 @@ describe('performIncrementalParse', () => {
     );
 
     expect(calls.map((call) => call.query)).toEqual([FIND_BY_ID_QUERY]);
+  });
+
+  it('deletes nothing when the parse fails, so the changed file keeps its old subgraph', async () => {
+    stubGraph([{ ...trackingRow('caller.ts'), contentHash: 'stale' }]);
+    vi.spyOn(TypeScriptParser.prototype, 'parseWorkspace').mockRejectedValueOnce(new Error('ENOENT: caller.ts'));
+
+    await expect(performIncrementalParse(root, PROJECT_ID, join(root, 'tsconfig.json'))).rejects.toThrow(
+      'ENOENT: caller.ts',
+    );
+
+    expect(callsOf(QUERIES.DELETE_SOURCE_FILE_SUBGRAPHS)).toEqual([]);
+    expect(graph.imports).toBe(0);
   });
 
   it('leaves the graph untouched when no file changed', async () => {
