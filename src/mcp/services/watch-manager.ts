@@ -40,7 +40,6 @@ export interface WatcherState {
   lastUpdateTime: Date | null;
   status: 'active' | 'paused' | 'error';
   errorMessage?: string;
-  syncPromise?: Promise<void>;
 }
 
 export interface WatcherInfo {
@@ -289,13 +288,28 @@ class WatchManager {
     // Set new debounce timer
     debugLog('handleFileEvent: setting debounce timer', { debounceMs: state.config.debounceMs });
     state.debounceTimer = setTimeout(() => {
-      debugLog('handleFileEvent: debounce timer fired, calling processEvents', { projectId: state.projectId });
-      this.processEvents(state).catch((error) => {
-        debugLog('handleFileEvent: processEvents error', { error: String(error) });
-        console.error('[WatchManager] Error in processEvents:', error);
-      });
+      state.debounceTimer = null;
+      this.startProcessingEvents(state);
     }, state.config.debounceMs);
     debugLog('handleFileEvent END', { pendingCount: state.pendingEvents.length });
+  }
+
+  private startProcessingEvents(state: WatcherState): void {
+    this.processEvents(state).catch((error) => {
+      debugLog('processEvents error', { projectId: state.projectId, error: String(error) });
+      console.error('[WatchManager] Error in processEvents:', error);
+    });
+  }
+
+  /**
+   * A debounce timer that fires during a parse finds the watcher busy and returns. The events it
+   * was set for are processed here, unless a later timer is still due to pick them up.
+   */
+  private finishParse(state: WatcherState): void {
+    state.isProcessing = false;
+    if (state.debounceTimer === null) {
+      this.startProcessingEvents(state);
+    }
   }
 
   /**
@@ -321,7 +335,6 @@ class WatchManager {
     await debugLog('processEvents: set isProcessing=true', {});
     const events = [...state.pendingEvents];
     state.pendingEvents = [];
-    state.debounceTimer = null;
 
     const startTime = Date.now();
 
@@ -391,8 +404,8 @@ class WatchManager {
 
       console.error(`[WatchManager] Incremental parse failed for ${state.projectId}:`, error);
     } finally {
-      state.isProcessing = false;
-      await debugLog('processEvents END', { projectId: state.projectId, isProcessing: state.isProcessing });
+      await debugLog('processEvents END', { projectId: state.projectId });
+      this.finishParse(state);
     }
   }
 
@@ -421,7 +434,6 @@ class WatchManager {
   /**
    * Sync any changes that occurred while the watcher was off
    * Runs in the background without blocking watcher startup
-   * Promise is tracked on state to allow cleanup during stop
    */
   private syncMissedChanges(state: WatcherState): void {
     debugLog('syncMissedChanges START', { projectId: state.projectId });
@@ -430,8 +442,9 @@ class WatchManager {
       return;
     }
 
-    // Track the promise on state so stopWatching can wait for it
-    state.syncPromise = this.incrementalParseHandler(state.projectPath, state.projectId, state.tsconfigPath)
+    // The sync is a parse like any other: events that arrive during it wait until it ends.
+    state.isProcessing = true;
+    this.incrementalParseHandler(state.projectPath, state.projectId, state.tsconfigPath)
       .then((result) => {
         debugLog('syncMissedChanges: completed', {
           projectId: state.projectId,
@@ -458,7 +471,7 @@ class WatchManager {
       })
       .finally(() => {
         debugLog('syncMissedChanges END', { projectId: state.projectId });
-        state.syncPromise = undefined;
+        this.finishParse(state);
       });
   }
 
@@ -487,18 +500,6 @@ class WatchManager {
     const startTime = Date.now();
     while (state.isProcessing && Date.now() - startTime < maxWaitMs) {
       await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    // Wait for sync promise if it exists (with timeout)
-    if (state.syncPromise) {
-      try {
-        await Promise.race([
-          state.syncPromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), 5000)),
-        ]);
-      } catch {
-        // Timeout or error - continue with cleanup
-      }
     }
 
     // Unsubscribe from @parcel/watcher (only if subscription exists)
