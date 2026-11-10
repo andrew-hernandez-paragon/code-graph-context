@@ -97,14 +97,16 @@ export const createImpactAnalysisTool = (server: McpServer): void => {
           .min(1)
           .max(6)
           .optional()
-          .describe('Maximum depth for transitive dependent traversal')
-          .default(4),
+          .describe(
+            'How many relationship hops to follow from the target when collecting dependents. Default 2. Raise it, up to 6, for a deeper search: that reaches more distant dependents and also returns more files that only depend on the target indirectly.',
+          )
+          .default(2),
         frameworkConfig: FrameworkConfigSchema.optional().describe(
           'Framework-specific configuration for risk scoring. Includes relationshipWeights (e.g., {"INJECTS": 0.9}), highRiskTypes (e.g., ["Controller", "Service"]), and optional name.',
         ),
       },
     },
-    async ({ projectId, nodeId, filePath, maxDepth = 4, frameworkConfig }) => {
+    async ({ projectId, nodeId, filePath, maxDepth, frameworkConfig }) => {
       const neo4jService = new Neo4jService();
       try {
         // Resolve project ID from name, path, or ID
