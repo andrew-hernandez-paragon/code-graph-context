@@ -13,7 +13,7 @@ import { NESTJS_FRAMEWORK_SCHEMA } from '../config/nestjs-framework-schema.js';
 import { Neo4jNode, Neo4jEdge, ParsingContext, FrameworkSchema, EdgeEnhancement } from '../config/schema.js';
 import { debugLog } from '../utils/file-utils.js';
 import { createFrameworkEdgeData } from '../utils/graph-factory.js';
-import { WorkspaceConfig, WorkspacePackage } from '../workspace/index.js';
+import { SourcePaths, WorkspaceConfig, WorkspacePackage, resolveWorkspaceSourcePaths } from '../workspace/index.js';
 
 import { ParserFactory, ProjectType } from './parser-factory.js';
 import { CallContext, TypeScriptParser } from './typescript-parser.js';
@@ -72,6 +72,7 @@ export class WorkspaceParser {
   private exportedEdgeIds: Set<string> = new Set();
   // Resolver parser for delegating edge resolution to TypeScriptParser
   private resolverParser: TypeScriptParser | null = null;
+  private sourcePaths: Promise<SourcePaths> | null = null;
 
   constructor(
     config: WorkspaceConfig,
@@ -158,11 +159,19 @@ export class WorkspaceParser {
    */
   private async createParserForPackage(pkg: WorkspacePackage): Promise<TypeScriptParser> {
     const tsConfigPath = pkg.tsConfigPath ?? path.join(pkg.path, 'tsconfig.json');
+    this.sourcePaths ??= resolveWorkspaceSourcePaths(this.config.packages);
+    const workspaceSourcePaths = await this.sourcePaths;
 
     let parser: TypeScriptParser;
     if (this.projectType === 'auto') {
       // Auto-detect framework for this specific package
-      parser = await ParserFactory.createParserWithAutoDetection(pkg.path, tsConfigPath, this.projectId, this.lazyLoad);
+      parser = await ParserFactory.createParserWithAutoDetection(
+        pkg.path,
+        tsConfigPath,
+        this.projectId,
+        this.lazyLoad,
+        workspaceSourcePaths,
+      );
     } else {
       // Use the specified project type for all packages
       parser = ParserFactory.createParser({
@@ -171,6 +180,7 @@ export class WorkspaceParser {
         projectType: this.projectType,
         projectId: this.projectId,
         lazyLoad: this.lazyLoad,
+        workspaceSourcePaths,
       });
     }
 

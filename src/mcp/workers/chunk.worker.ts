@@ -17,6 +17,7 @@ dotenv.config({ path: join(__dirname, '..', '..', '..', '.env'), quiet: true });
 
 import { ParserFactory } from '../../core/parsers/parser-factory.js';
 import { StreamingParser } from '../../core/parsers/typescript-parser.js';
+import { detectWorkspaceSourcePaths } from '../../core/workspace/index.js';
 
 import {
   ChunkWorkerConfig,
@@ -56,7 +57,7 @@ const sendError = (chunkIndex: number, error: Error): void => {
  * Uses lazyLoad=true so parser only loads files we give it.
  * projectType is already resolved by coordinator (no auto-detection here).
  */
-const initParser = (): StreamingParser => {
+const initParser = async (): Promise<StreamingParser> => {
   if (parser) return parser;
 
   parser = ParserFactory.createParser({
@@ -65,6 +66,7 @@ const initParser = (): StreamingParser => {
     projectType: config.projectType,
     projectId: config.projectId,
     lazyLoad: true, // Critical: only load files we're given
+    workspaceSourcePaths: await detectWorkspaceSourcePaths(config.projectPath),
   });
 
   // Defer edge enhancements - coordinator will handle after all chunks complete
@@ -75,7 +77,7 @@ const initParser = (): StreamingParser => {
 
 const processChunk = async (files: string[], chunkIndex: number): Promise<void> => {
   try {
-    const p = initParser();
+    const p = await initParser();
 
     // Clear any accumulated data from previous chunks
     p.clearParsedData();

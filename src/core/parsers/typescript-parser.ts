@@ -51,6 +51,7 @@ import {
   toParsedEdge,
   generateDeterministicId,
 } from '../utils/graph-factory.js';
+import { SourcePaths } from '../workspace/index.js';
 
 /**
  * What a CALLS edge needs to find its target after every file is parsed, and what it records about the call.
@@ -198,6 +199,7 @@ export class TypeScriptParser {
     parseConfig: ParseOptions = DEFAULT_PARSE_OPTIONS,
     projectId: string,
     lazyLoad: boolean = false, // Set to true for large projects to avoid OOM
+    workspaceSourcePaths: SourcePaths = {},
   ) {
     this.workspacePath = workspacePath;
     this.coreSchema = coreSchema;
@@ -241,6 +243,12 @@ export class TypeScriptParser {
       });
       // Include both .ts and .tsx files
       this.project.addSourceFilesAtPaths(path.join(workspacePath, '**/*.{ts,tsx}'));
+    }
+
+    if (Object.keys(workspaceSourcePaths).length > 0) {
+      // The tsconfig's own paths win; absolute targets need no baseUrl
+      const configuredPaths = this.project.getCompilerOptions().paths;
+      this.project.compilerOptions.set({ paths: { ...workspaceSourcePaths, ...configuredPaths } });
     }
   }
 

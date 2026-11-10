@@ -7,6 +7,7 @@ import { EXCLUDE_PATTERNS_REGEX } from '../../constants.js';
 import { FAIRSQUARE_FRAMEWORK_SCHEMA } from '../config/fairsquare-framework-schema.js';
 import { NESTJS_FRAMEWORK_SCHEMA } from '../config/nestjs-framework-schema.js';
 import { CORE_TYPESCRIPT_SCHEMA, FrameworkSchema, CoreNodeType } from '../config/schema.js';
+import { SourcePaths, detectWorkspaceSourcePaths } from '../workspace/index.js';
 
 import { TypeScriptParser } from './typescript-parser.js';
 
@@ -26,6 +27,8 @@ export interface ParserFactoryOptions {
   excludedNodeTypes?: CoreNodeType[];
   projectId: string; // The id ProjectService chose for this workspace; parsers never derive one
   lazyLoad?: boolean; // Set to true for large projects to avoid OOM
+  /** Workspace package specifiers mapped to their source entry, so imports between packages resolve to source. */
+  workspaceSourcePaths?: SourcePaths;
 }
 
 export class ParserFactory {
@@ -42,6 +45,7 @@ export class ParserFactory {
       excludedNodeTypes = [CoreNodeType.PARAMETER_DECLARATION],
       projectId,
       lazyLoad = false,
+      workspaceSourcePaths = {},
     } = options;
 
     // Select framework schemas based on project type
@@ -58,6 +62,7 @@ export class ParserFactory {
       },
       projectId,
       lazyLoad,
+      workspaceSourcePaths,
     );
   }
 
@@ -150,6 +155,7 @@ export class ParserFactory {
     tsConfigPath: string | undefined,
     projectId: string,
     lazyLoad: boolean = false,
+    workspaceSourcePaths?: SourcePaths,
   ): Promise<TypeScriptParser> {
     const projectType = await this.detectProjectType(workspacePath);
 
@@ -159,6 +165,7 @@ export class ParserFactory {
       projectType,
       projectId,
       lazyLoad,
+      workspaceSourcePaths: workspaceSourcePaths ?? (await detectWorkspaceSourcePaths(workspacePath)),
     });
   }
 }
