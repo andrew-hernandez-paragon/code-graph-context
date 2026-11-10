@@ -329,8 +329,9 @@ export const QUERIES = {
     RETURN count(*) > 0 as exists
   `,
 
+  // Config files are SourceFile nodes too; only the files the TypeScript parser indexed are compared with disk.
   GET_SOURCE_FILE_TRACKING_INFO: `
-    MATCH (sf:SourceFile)
+    MATCH (sf:SourceFile:TypeScript)
     WHERE sf.projectId = $projectId
     RETURN sf.filePath AS filePath,
            COALESCE(sf.mtime, 0) AS mtime,
@@ -359,6 +360,13 @@ export const QUERIES = {
     MATCH (n:GraphNode)
     WHERE n.filePath IN $filePaths AND n.projectId = $projectId
     DETACH DELETE n
+  `,
+
+  // Config files are SourceFile nodes without the parser's TypeScript label.
+  DELETE_CONFIG_FILE_NODES: `
+    MATCH (sf:SourceFile)
+    WHERE sf.projectId = $projectId AND NOT sf:TypeScript
+    DETACH DELETE sf
   `,
 
   // Node ids are deterministic, so an edge whose target the reparse dropped or renamed matches nothing.

@@ -14,6 +14,7 @@ import { QUERIES } from '../neo4j.service.js';
 // Without a label Neo4j cannot use an index and scans every node in the database.
 const labelledLookups: Array<[string, string, string]> = [
   ['DELETE_SOURCE_FILE_SUBGRAPHS', QUERIES.DELETE_SOURCE_FILE_SUBGRAPHS, 'MATCH (n:GraphNode)'],
+  ['DELETE_CONFIG_FILE_NODES', QUERIES.DELETE_CONFIG_FILE_NODES, 'MATCH (sf:SourceFile)'],
   ['GET_INCOMING_EDGES target', QUERIES.GET_INCOMING_EDGES, 'MATCH (target:GraphNode)'],
   ['GET_INCOMING_EDGES source', QUERIES.GET_INCOMING_EDGES, 'MATCH (source:GraphNode)-[r]->(target)'],
   [

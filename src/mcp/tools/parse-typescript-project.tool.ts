@@ -413,6 +413,11 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
 
           await debugLog('Neo4j import completed', result);
 
+          if (clearExisting === false) {
+            // An incremental parse keeps the graph, so the config files ingested below replace the stored ones.
+            await neo4jService.run(QUERIES.DELETE_CONFIG_FILE_NODES, { projectId: finalProjectId });
+          }
+
           // Ingest config files
           const configResult = await graphGeneratorHandler.ingestConfigFiles(
             projectPath,
