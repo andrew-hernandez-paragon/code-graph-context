@@ -180,6 +180,13 @@ export const createSessionRecallTool = (server: McpServer): void => {
           .describe(
             'When false (default), notes with non-null supersededBy are filtered out, recall returns only current notes. Set true to surface superseded history (e.g. for archaeology).',
           ),
+        includeBookmark: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe(
+            "When true (default), recall also returns a bookmark with its working set: the session's latest for sessionId, or for a query alone the closest saved bookmark from any session. Set false to get notes only; no bookmark is looked up.",
+          ),
       },
     },
     async ({
@@ -195,6 +202,7 @@ export const createSessionRecallTool = (server: McpServer): void => {
       limit,
       minSimilarity: requestedMinSimilarity,
       includeSuperseded,
+      includeBookmark,
     }) => {
       const neo4jService = new Neo4jService();
       const minSimilarity = requestedMinSimilarity ?? getNoteRecallFloor();
@@ -224,17 +232,18 @@ export const createSessionRecallTool = (server: McpServer): void => {
         }
 
         // Choose how to find the bookmark:
+        //   includeBookmark false → no bookmark
         //   sessionId provided    → latest bookmark for that session (resume / continue)
         //   else, queryEmbedding  → top semantic match across all bookmarks
         //   else                  → no bookmark
         let bookmarkRows: any[] = [];
-        if (sessionId) {
+        if (includeBookmark && sessionId) {
           bookmarkRows = await neo4jService.run(FIND_BOOKMARK_QUERY, {
             projectIds: resolvedProjectIds,
             sessionId,
             agentId: agentId ?? null,
           });
-        } else if (queryEmbedding) {
+        } else if (includeBookmark && queryEmbedding) {
           bookmarkRows = await runProjectFilteredSearch(
             neo4jService,
             VECTOR_INDEXES.sessionBookmarks,
@@ -392,7 +401,7 @@ export const createSessionRecallTool = (server: McpServer): void => {
         if (!bookmark && notes.length === 0) {
           return createEmptyResponse(
             sessionId
-              ? `No bookmark or notes found for session "${sessionId}" in ${projectLabel}`
+              ? `No ${includeBookmark ? 'bookmark or notes' : 'notes'} found for session "${sessionId}" in ${projectLabel}`
               : query
                 ? `No note was close enough to the query in ${projectLabel}`
                 : `No notes found in ${projectLabel}`,
@@ -409,15 +418,12 @@ export const createSessionRecallTool = (server: McpServer): void => {
               projects: projectsResult.projects.map(({ projectId: id, name, kind }) => ({ projectId: id, name, kind })),
               searchMode: query ? 'semantic' : 'filter',
               includeSuperseded,
-              bookmark,
-              workingSet,
-              staleNodeIds,
+              ...(includeBookmark && { bookmark, workingSet, staleNodeIds }),
               notes,
               stats: {
                 notesCount: notes.length,
                 notesWithStaleRefs,
-                workingSetFound: workingSet.length,
-                workingSetStale: staleNodeIds.length,
+                ...(includeBookmark && { workingSetFound: workingSet.length, workingSetStale: staleNodeIds.length }),
               },
             },
             null,
