@@ -110,6 +110,28 @@ describe('WatchManager', () => {
     expect(parse).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores the paths the parser never indexes, so editing them starts no parse', async () => {
+    await watchManager.startWatching(WATCHED);
+
+    expect(parcel.ignore).toEqual([
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/coverage/**',
+      '**/*.d.ts',
+      '**/*.spec.ts',
+      '**/*.test.ts',
+      '**/jest.config.ts',
+      '**/*-e2e/**',
+      '**/test-setup.ts',
+      '**/global-setup.ts',
+      '**/global-teardown.ts',
+      '**/.git/**',
+      '**/*.js',
+      '**/*.map',
+    ]);
+  });
+
   it('parses nothing after a parse that no change followed', async () => {
     await startWatchingWithSyncDone();
     parcel.emit(edit('only.ts'));

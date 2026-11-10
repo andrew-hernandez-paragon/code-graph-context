@@ -3,6 +3,7 @@
  * All constants used throughout the MCP server implementation
  */
 
+import { EXCLUDE_PATTERNS_GLOB } from '../constants.js';
 import { readPackageVersion } from '../core/utils/package-version.js';
 
 // Re-export shared constants
@@ -167,7 +168,7 @@ Takes nodeId (from search_codebase or traverse_from_node) or filePath, in a pars
   },
   [TOOL_NAMES.startWatchProject]: {
     title: 'Start Watch Project',
-    description: `Keeps a codebase's graph current by re-parsing .ts files as they change. Needs a codebase parsed with parse_typescript_project. Excludes node_modules, dist, build and .git. Stop it with stop_watch_project; list_watchers shows active watchers.`,
+    description: `Keeps a codebase's graph current by re-parsing .ts files as they change. Needs a codebase parsed with parse_typescript_project. Skips what the parser skips (node_modules, dist, build, coverage, test files) and .git. Stop it with stop_watch_project; list_watchers shows active watchers.`,
     annotations: ADDS_IDEMPOTENT,
   },
   [TOOL_NAMES.stopWatchProject]: {
@@ -395,16 +396,8 @@ export const WATCH = {
   maxWatchers: 10,
   /** Maximum pending file change events before dropping */
   maxPendingEvents: 1000,
-  /** Default exclude patterns for file watching */
-  excludePatterns: [
-    '**/node_modules/**',
-    '**/dist/**',
-    '**/build/**',
-    '**/.git/**',
-    '**/*.d.ts',
-    '**/*.js',
-    '**/*.map',
-  ],
+  /** Paths the watcher skips: everything the parser skips, plus git internals and compiled output */
+  excludePatterns: [...EXCLUDE_PATTERNS_GLOB, '**/.git/**', '**/*.js', '**/*.map'],
 } as const;
 
 // Messages
