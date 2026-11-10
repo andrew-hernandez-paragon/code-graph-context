@@ -485,42 +485,16 @@ export class WorkspaceParser {
    * Get deferred edges for cross-chunk resolution.
    * Returns serializable format for worker thread transfer.
    */
-  getDeferredEdges(): Array<{
-    edgeType: string;
-    sourceNodeId: string;
-    targetName: string;
-    targetType: string;
-    targetFilePath?: string;
-  }> {
-    return this.accumulatedDeferredEdges.map((e) => ({
-      edgeType: e.edgeType,
-      sourceNodeId: e.sourceNodeId,
-      targetName: e.targetName,
-      targetType: e.targetType,
-      targetFilePath: e.targetFilePath,
-    }));
+  getDeferredEdges(): DeferredEdge[] {
+    return [...this.accumulatedDeferredEdges];
   }
 
   /**
    * Merge deferred edges from workers for resolution.
    */
-  mergeDeferredEdges(
-    edges: Array<{
-      edgeType: string;
-      sourceNodeId: string;
-      targetName: string;
-      targetType: string;
-      targetFilePath?: string;
-    }>,
-  ): void {
-    for (const e of edges) {
-      this.accumulatedDeferredEdges.push({
-        edgeType: e.edgeType,
-        sourceNodeId: e.sourceNodeId,
-        targetName: e.targetName,
-        targetType: e.targetType,
-        targetFilePath: e.targetFilePath,
-      });
+  mergeDeferredEdges(edges: DeferredEdge[]): void {
+    for (const edge of edges) {
+      this.accumulatedDeferredEdges.push(edge);
     }
   }
 
@@ -539,7 +513,7 @@ export class WorkspaceParser {
       this.resolverParser = TypeScriptParser.createResolver(this.projectId);
     }
 
-    // Populate resolver with accumulated nodes (builds CALLS indexes automatically)
+    // Populate resolver with accumulated nodes
     this.resolverParser.addParsedNodesFromChunk(Array.from(this.parsedNodes.values()));
 
     // Transfer deferred edges to resolver

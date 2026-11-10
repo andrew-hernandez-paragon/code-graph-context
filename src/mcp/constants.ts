@@ -148,7 +148,7 @@ A directory project already registered at projectPath becomes the codebase and k
     title: 'Impact Analysis',
     description: `Shows what depends on a code node or file, and how far a change would spread, before you modify shared code. Returns a risk level (LOW/MEDIUM/HIGH/CRITICAL), direct and transitive dependents, affected files and critical paths.
 
-Takes nodeId (from search_codebase or traverse_from_node) or filePath, in a parsed codebase.`,
+Takes nodeId (from search_codebase or traverse_from_node) or filePath, in a parsed codebase. Follows dependents 2 hops from the target by default; pass maxDepth (up to 6) for a deeper search.`,
     annotations: READS,
   },
   [TOOL_NAMES.checkParseStatus]: {

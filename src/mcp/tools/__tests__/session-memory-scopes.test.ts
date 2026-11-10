@@ -119,6 +119,7 @@ const recall = async (args: Record<string, unknown>) =>
     snippetLength: 500,
     limit: 5,
     includeSuperseded: false,
+    includeBookmark: true,
     ...args,
   });
 
@@ -306,6 +307,164 @@ describe('session_recall', () => {
     const [query, params] = callsTo('VECTOR INDEX session_bookmarks_idx')[0];
     expect(query.startsWith('CYPHER 25')).toBe(true);
     expect(params.projectIds).toEqual(['proj_code', 'proj_other']);
+  });
+
+  describe('bookmark', () => {
+    const BOOKMARK_ROW = {
+      id: 'bookmark_1',
+      projectId: 'proj_code',
+      sessionId: 'earlier-session',
+      agentId: 'a',
+      summary: 'Raising the retry cap',
+      workingSetNodeIds: ['proj_code:Function:found', 'proj_code:Function:gone'],
+      workingSetPaths: [],
+      taskContext: 'retry cap',
+      findings: 'the cap is five',
+      nextSteps: 'raise it to eight',
+      metadata: null,
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const WORKING_SET_ROW = {
+      id: 'proj_code:Function:found',
+      projectId: 'proj_code',
+      type: 'Function',
+      name: 'retry',
+      filePath: '/repo/retry.ts',
+      sourceCode: 'function retry() {}',
+      coreType: 'FunctionDeclaration',
+      semanticType: null,
+      startLine: 1,
+      endLine: 1,
+    };
+    const RECALLED_BOOKMARK = {
+      id: 'bookmark_1',
+      projectId: 'proj_code',
+      sessionId: 'earlier-session',
+      agentId: 'a',
+      summary: 'Raising the retry cap',
+      taskContext: 'retry cap',
+      findings: 'the cap is five',
+      nextSteps: 'raise it to eight',
+      workingSetPaths: [],
+      missingWorkingSetPaths: [],
+      metadata: null,
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const RECALLED_WORKING_SET = [
+      {
+        id: 'proj_code:Function:found',
+        type: 'Function',
+        name: 'retry',
+        filePath: '/repo/retry.ts',
+        coreType: 'FunctionDeclaration',
+        semanticType: null,
+        startLine: 1,
+        endLine: 1,
+        sourceCode: 'function retry() {}',
+      },
+    ];
+
+    /** One saved bookmark that both lookups return, with one working-set node left in the graph, plus one note. */
+    const withSavedBookmark = () =>
+      run.mockImplementation(async (query: string, params: Record<string, unknown>) => {
+        if (query.includes('VECTOR INDEX session_bookmarks_idx')) return [{ ...BOOKMARK_ROW, relevance: 0.9 }];
+        if (query.includes('ORDER BY b.createdAt DESC')) return [BOOKMARK_ROW];
+        if (query.includes('-[:REFERENCES]->(target)')) return [WORKING_SET_ROW];
+        if (query.includes('VECTOR INDEX session_notes_idx')) return [{ id: 'note_1', score: 0.9 }];
+        if (query.includes('WHERE n.id IN $ids')) {
+          return [{ id: 'note_1', projectId: 'proj_code', topic: 'retry cap', content: '', aboutPaths: [] }];
+        }
+        return fakeRun(query, params);
+      });
+    const bookmarkQueries = () => callsTo('(b:SessionBookmark').map(([query]) => query);
+
+    it('returns the closest bookmark, its working set and its stale node ids with a query by default', async () => {
+      withSavedBookmark();
+
+      const recalled = resultJson(await recall({ projectId: 'proj_code', query: 'retry cap' }));
+
+      expect(Object.keys(recalled)).toEqual([
+        'success',
+        'projects',
+        'searchMode',
+        'includeSuperseded',
+        'bookmark',
+        'workingSet',
+        'staleNodeIds',
+        'notes',
+        'stats',
+      ]);
+      expect(bookmarkQueries()).toHaveLength(2);
+      expect(recalled.bookmark).toEqual({ ...RECALLED_BOOKMARK, matchSource: 'semantic', relevance: 0.9 });
+      expect(recalled.workingSet).toEqual(RECALLED_WORKING_SET);
+      expect(recalled.staleNodeIds).toEqual(['proj_code:Function:gone']);
+      expect(recalled.stats).toEqual({
+        notesCount: 1,
+        notesWithStaleRefs: 0,
+        workingSetFound: 1,
+        workingSetStale: 1,
+      });
+    });
+
+    it('issues no bookmark query and leaves the bookmark fields out when includeBookmark is false', async () => {
+      withSavedBookmark();
+
+      const recalled = resultJson(await recall({ projectId: 'proj_code', query: 'retry cap', includeBookmark: false }));
+
+      expect(bookmarkQueries()).toEqual([]);
+      expect(Object.keys(recalled)).toEqual([
+        'success',
+        'projects',
+        'searchMode',
+        'includeSuperseded',
+        'notes',
+        'stats',
+      ]);
+      expect(recalled.notes.map((note: { id: string }) => note.id)).toEqual(['note_1']);
+      expect(recalled.stats).toEqual({ notesCount: 1, notesWithStaleRefs: 0 });
+    });
+
+    it('restores the latest bookmark of a session by default, and skips it when includeBookmark is false', async () => {
+      withSavedBookmark();
+      await saveNote();
+
+      const restored = resultJson(await recall({ projectId: 'proj_code', sessionId: 'earlier-session' }));
+      expect(restored.bookmark).toEqual({ ...RECALLED_BOOKMARK, matchSource: 'sessionId', relevance: null });
+      expect(restored.workingSet).toEqual(RECALLED_WORKING_SET);
+
+      run.mockClear();
+      const notesOnly = resultJson(
+        await recall({ projectId: 'proj_code', sessionId: 'earlier-session', includeBookmark: false }),
+      );
+      expect(bookmarkQueries()).toEqual([]);
+      expect(Object.keys(notesOnly)).toEqual([
+        'success',
+        'projects',
+        'searchMode',
+        'includeSuperseded',
+        'notes',
+        'stats',
+      ]);
+    });
+
+    it('says only that no notes were found when the bookmark was not looked up', async () => {
+      const recalled = resultJson(
+        await recall({ projectId: 'proj_code', sessionId: 'earlier-session', includeBookmark: false }),
+      );
+
+      expect(recalled.message).toBe('No notes found for session "earlier-session" in code (proj_code)');
+    });
+
+    it('defaults includeBookmark to true in the input schema', () => {
+      const registerTool = vi.fn();
+      createSessionRecallTool({ registerTool } as unknown as McpServer);
+      const { includeBookmark } = registerTool.mock.calls[0][1].inputSchema;
+
+      expect(includeBookmark.parse(undefined)).toBe(true);
+      expect(includeBookmark.parse(false)).toBe(false);
+    });
   });
 
   it('reports a file that is gone, and a file edited after the save, until the note is updated', async () => {

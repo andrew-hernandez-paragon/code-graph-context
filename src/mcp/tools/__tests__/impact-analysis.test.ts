@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { QUERIES } from '../../../storage/neo4j/neo4j.service.js';
 import { createImpactAnalysisTool } from '../impact-analysis.tool.js';
@@ -30,10 +31,16 @@ const dependent = (nodeId: string, overrides: Record<string, unknown> = {}) => (
   targetNodeType: 'VariableDeclaration',
   ...overrides,
 });
-const invoke = async (args: Record<string, unknown>) => {
+const registeredTool = () => {
   const registerTool = vi.fn();
   createImpactAnalysisTool({ registerTool } as unknown as McpServer);
-  return registerTool.mock.calls[0][2]({ projectId: 'proj_test', maxDepth: 4, ...args });
+  const [, { description, inputSchema }, handler] = registerTool.mock.calls[0];
+  return { description, input: z.object(inputSchema), handler };
+};
+// The handler receives input after zod has applied its defaults, so invoke parses the arguments the same way.
+const invoke = async (args: Record<string, unknown>) => {
+  const { input, handler } = registeredTool();
+  return handler(input.parse({ projectId: 'proj_test', ...args }));
 };
 const resultJson = (response: any) => JSON.parse(response.content[0].text);
 
@@ -61,7 +68,7 @@ describe('file impact', () => {
         ];
       return original(query, params);
     });
-    const result = resultJson(await invoke({ filePath: '/repo/feature.ts' }));
+    const result = resultJson(await invoke({ filePath: '/repo/feature.ts', maxDepth: 4 }));
     expect(result.target).toEqual({ ...sourceFile, coreType: undefined, type: 'SourceFile' });
     expect(result.analysis).toMatchObject({ scope: 'file', analyzedNodeCount: 4, freshness: 'not_verified' });
     expect(result.directDependents.count).toBe(1);
@@ -111,7 +118,35 @@ describe('file impact', () => {
     expect(result.summary).toContain('does not establish that it is safe');
     expect(result.analysis.riskBasis).toBe('relationship_heuristic');
     expect(result.transitiveDependents.count).toBe(0);
-    expect(run.mock.calls.some(([query]) => query === QUERIES.GET_NODES_TRANSITIVE_DEPENDENTS(4))).toBe(false);
+    expect(run.mock.calls.some(([query]) => query.includes('MATCH path = (dependent)-[*2..'))).toBe(false);
+  });
+
+  it('follows dependents two hops when maxDepth is not given', async () => {
+    await invoke({ nodeId: 'arrow' });
+
+    expect(run).toHaveBeenCalledWith(QUERIES.GET_NODES_TRANSITIVE_DEPENDENTS(2), {
+      nodeIds: ['arrow'],
+      projectId: 'proj_test',
+      excludedFilePath: null,
+    });
+    expect(run.mock.calls.filter(([query]) => query.includes('MATCH path = (dependent)-[*2..'))).toHaveLength(1);
+  });
+
+  it('tells the caller in its description that a deeper search is available', () => {
+    expect(registeredTool().description).toContain(
+      'Follows dependents 2 hops from the target by default; pass maxDepth (up to 6) for a deeper search.',
+    );
+  });
+
+  it('searches as deep as maxDepth asks, up to six hops', async () => {
+    await invoke({ nodeId: 'arrow', maxDepth: 6 });
+
+    expect(run).toHaveBeenCalledWith(QUERIES.GET_NODES_TRANSITIVE_DEPENDENTS(6), {
+      nodeIds: ['arrow'],
+      projectId: 'proj_test',
+      excludedFilePath: null,
+    });
+    expect(() => registeredTool().input.parse({ projectId: 'proj_test', nodeId: 'arrow', maxDepth: 7 })).toThrow();
   });
 
   it('retains single-node analysis without excluding other symbols in that file', async () => {

@@ -56,23 +56,3 @@ export const matchesPattern = (filePath: string, pattern: string): boolean => {
     return false;
   }
 };
-
-/**
- * Clean up a TypeScript type name by removing generics, imports, etc.
- * Examples:
- *   import("./foo").ClassName -> ClassName
- *   ClassName<T> -> ClassName
- *   ClassName[] -> ClassName
- */
-export const cleanTypeName = (typeName: string): string => {
-  // Remove import paths: import("...").ClassName -> ClassName
-  let cleaned = typeName.replace(/import\([^)]+\)\./g, '');
-  // Remove generics: ClassName<T> -> ClassName
-  const genericIndex = cleaned.indexOf('<');
-  if (genericIndex > 0) {
-    cleaned = cleaned.substring(0, genericIndex);
-  }
-  // Remove array notation: ClassName[] -> ClassName
-  cleaned = cleaned.replace(/\[\]$/, '');
-  return cleaned.trim();
-};

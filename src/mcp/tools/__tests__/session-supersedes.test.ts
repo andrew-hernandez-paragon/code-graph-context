@@ -108,6 +108,7 @@ const recallTopics = async (args: Record<string, unknown> = {}) => {
       limit: 5,
       minSimilarity: 0.3,
       includeSuperseded: false,
+      includeBookmark: true,
       ...args,
     }),
   );
