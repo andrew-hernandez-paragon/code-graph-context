@@ -4,6 +4,7 @@
 
 import { Neo4jNode, Neo4jEdge } from '../../core/config/schema.js';
 import { ProjectType } from '../../core/parsers/parser-factory.js';
+import { CallContext } from '../../core/parsers/typescript-parser.js';
 
 /**
  * Data passed to chunk worker via workerData.
@@ -51,19 +52,6 @@ export interface ChunkWorkerReady {
 export type SerializedSharedContext = Array<[string, unknown]>;
 
 /**
- * Context for CALLS edge resolution.
- * Captures information about how a call was made to enable precise target matching.
- */
-export interface SerializedCallContext {
-  receiverExpression?: string;
-  receiverType?: string;
-  receiverPropertyName?: string;
-  lineNumber: number;
-  isAsync: boolean;
-  argumentCount: number;
-}
-
-/**
  * Deferred edge that needs cross-chunk resolution.
  * These are EXTENDS, IMPLEMENTS, IMPORTS, and CALLS edges where target wasn't found in same chunk.
  */
@@ -73,7 +61,7 @@ export interface SerializedDeferredEdge {
   targetName: string;
   targetType: string;
   targetFilePath?: string;
-  callContext?: SerializedCallContext;
+  callContext?: CallContext;
 }
 
 /**
