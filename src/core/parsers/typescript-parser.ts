@@ -4,7 +4,15 @@ import path from 'node:path';
 
 import { glob } from 'glob';
 import { minimatch } from 'minimatch';
-import { Project, SourceFile, Node } from 'ts-morph';
+import {
+  ExportDeclaration,
+  ImportDeclaration,
+  Node,
+  Project,
+  SourceFile,
+  Symbol as MorphSymbol,
+  SymbolFlags,
+} from 'ts-morph';
 
 import { EXCLUDE_PATTERNS_GLOB, BUILT_IN_FUNCTIONS, BUILT_IN_METHODS, BUILT_IN_CLASSES } from '../../constants.js';
 import { NESTJS_FRAMEWORK_SCHEMA } from '../config/nestjs-framework-schema.js';
@@ -529,38 +537,14 @@ export class TypeScriptParser {
 
     await this.parseChildNodes(this.coreSchema.nodeTypes[CoreNodeType.SOURCE_FILE], sourceFileNode, sourceFile);
 
-    // Queue IMPORTS edges for deferred resolution
-    // Note: ImportDeclaration nodes are already created by parseChildNodes via the schema
-    // This adds SourceFile → SourceFile IMPORTS edges for cross-file dependency tracking
-    for (const importDecl of sourceFile.getImportDeclarations()) {
-      const moduleSpecifier = importDecl.getModuleSpecifierValue();
-
-      // Skip external modules (node_modules) - only process relative and scoped imports
-      if (!moduleSpecifier.startsWith('.') && !moduleSpecifier.startsWith('@')) {
-        continue;
-      }
-
-      // Use ts-morph's module resolution to get the actual file path
-      // This correctly resolves relative imports like './auth.controller' to absolute paths
-      try {
-        const targetSourceFile = importDecl.getModuleSpecifierSourceFile();
-        if (targetSourceFile) {
-          this.deferredEdges.push({
-            edgeType: CoreEdgeType.IMPORTS,
-            sourceNodeId: sourceFileNode.id,
-            targetName: targetSourceFile.getFilePath(), // Store resolved absolute path
-            targetType: CoreNodeType.SOURCE_FILE,
-          });
-        }
-      } catch {
-        // If resolution fails, fall back to raw module specifier
-        this.deferredEdges.push({
-          edgeType: CoreEdgeType.IMPORTS,
-          sourceNodeId: sourceFileNode.id,
-          targetName: moduleSpecifier,
-          targetType: CoreNodeType.SOURCE_FILE,
-        });
-      }
+    // IMPORTS edges run SourceFile → SourceFile; they resolve after every file has a node
+    for (const target of this.importTargets(sourceFile)) {
+      this.deferredEdges.push({
+        edgeType: CoreEdgeType.IMPORTS,
+        sourceNodeId: sourceFileNode.id,
+        targetName: target,
+        targetType: CoreNodeType.SOURCE_FILE,
+      });
     }
 
     for (const varStatement of sourceFile.getVariableStatements()) {
@@ -580,6 +564,54 @@ export class TypeScriptParser {
         this.addEdge(containsEdge);
       }
     }
+  }
+
+  // The module each import or re-export declaration names, and the file that declares each name it takes
+  // from that module, however many barrels sit in between.
+  private importTargets(sourceFile: SourceFile): Set<string> {
+    const targets = new Set<string>();
+    const addIndexedFile = (filePath: string): void => {
+      if (filePath !== sourceFile.getFilePath() && !this.isExcludedPath(filePath)) targets.add(filePath);
+    };
+
+    for (const declaration of [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations()]) {
+      const moduleSpecifier = declaration.getModuleSpecifierValue();
+      // Only relative and scoped specifiers can name a file of this project
+      if (!moduleSpecifier || !(moduleSpecifier.startsWith('.') || moduleSpecifier.startsWith('@'))) continue;
+
+      try {
+        const moduleFile = declaration.getModuleSpecifierSourceFile();
+        if (moduleFile) addIndexedFile(moduleFile.getFilePath());
+        this.boundSymbols(declaration)
+          .flatMap((binding) => this.declaringFilePaths(binding))
+          .forEach(addIndexedFile);
+      } catch {
+        // Resolution failed: keep the raw specifier so findNodeByNameAndType can match it by path
+        targets.add(moduleSpecifier);
+      }
+    }
+    return targets;
+  }
+
+  private boundSymbols(declaration: ImportDeclaration | ExportDeclaration): MorphSymbol[] {
+    const bindings = Node.isImportDeclaration(declaration)
+      ? [declaration.getDefaultImport(), declaration.getNamespaceImport(), ...declaration.getNamedImports()]
+      : [declaration.getNamespaceExport(), ...declaration.getNamedExports()];
+    return bindings.flatMap((binding) => binding?.getSymbol() ?? []);
+  }
+
+  // The type checker follows the alias through every re-export. A binding to a whole module
+  // (import * as, export * as) stands for each of that module's exports.
+  private declaringFilePaths(binding: MorphSymbol): string[] {
+    const target = binding.getAliasedSymbol() ?? binding;
+    const declared = target.hasFlags(SymbolFlags.ValueModule)
+      ? [target, ...this.project.getTypeChecker().getExportsOfModule(target)]
+      : [target];
+    return declared.flatMap((symbol) =>
+      ((symbol.getAliasedSymbol() ?? symbol).compilerSymbol.declarations ?? []).map(
+        (declaration) => declaration.getSourceFile().fileName,
+      ),
+    );
   }
 
   private async parseChildNodes(parentNodeConfig: CoreNode, parentNode: ParsedNode, astNode: Node): Promise<void> {
@@ -1808,16 +1840,12 @@ export class TypeScriptParser {
   }
 
   private shouldSkipFile(sourceFile: SourceFile): boolean {
-    const filePath = sourceFile.getFilePath();
+    return this.isExcludedPath(sourceFile.getFilePath());
+  }
+
+  private isExcludedPath(filePath: string): boolean {
     const excludedPatterns = this.parseConfig.excludePatterns ?? [];
-
-    for (const pattern of excludedPatterns) {
-      if (matchesPattern(filePath, pattern)) {
-        return true;
-      }
-    }
-
-    return false;
+    return excludedPatterns.some((pattern) => matchesPattern(filePath, pattern));
   }
 
   private shouldSkipChildNode(node: Node): boolean {
