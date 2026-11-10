@@ -487,8 +487,7 @@ export const QUERIES = {
            n.coreType AS coreType,
            n.semanticType AS semanticType,
            labels(n) AS labels,
-           n.filePath AS filePath,
-           n.parentClassName AS parentClassName
+           n.filePath AS filePath
   `,
 
   EXPLORE_ALL_CONNECTIONS: (

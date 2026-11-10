@@ -6,7 +6,7 @@
 import { writeFileSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 
-import { CORE_TYPESCRIPT_SCHEMA, Neo4jEdge, Neo4jNode } from '../../core/config/schema.js';
+import { CORE_TYPESCRIPT_SCHEMA, CoreEdgeType, Neo4jEdge, Neo4jNode } from '../../core/config/schema.js';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { ParserFactory } from '../../core/parsers/parser-factory.js';
 import type { TypeScriptParser } from '../../core/parsers/typescript-parser.js';
@@ -23,7 +23,17 @@ import {
   restoreIncomingEdges,
   saveIncomingEdges,
 } from './cross-file-edge.helpers.js';
-import { findDependentFiles, loadNodeIds } from './dependent-files.js';
+import {
+  SubtypeEdge,
+  deleteOutgoingEdges,
+  describeSubtypeChanges,
+  findDependentFiles,
+  findImportersThroughReExports,
+  findReExportingFiles,
+  reExportingFilesOf,
+  loadNodeIds,
+  loadSubtypeEdges,
+} from './dependent-files.js';
 import { GraphGeneratorHandler } from './graph-generator.handler.js';
 import { recoverSessionEdges } from './session-edge-recovery.helpers.js';
 
@@ -56,6 +66,30 @@ export interface ChangedFilesGraph {
   filesReparsed: number;
   filesDeleted: number;
 }
+
+/** The EXTENDS and IMPLEMENTS edges a parse produced for the reparsed nodes, in the shape of the stored ones. */
+const subtypeEdgesOf = (edges: Neo4jEdge[], reparsedNodes: Neo4jNode[], existingNodes: Neo4jNode[]): SubtypeEdge[] => {
+  const reparsedById = new Map(reparsedNodes.map((node) => [node.id, node.properties]));
+  const existingById = new Map(existingNodes.map((node) => [node.id, node.properties]));
+  return edges.flatMap((edge) => {
+    const subtype = reparsedById.get(edge.startNodeId);
+    const supertype = reparsedById.get(edge.endNodeId) ?? existingById.get(edge.endNodeId);
+    const isSubtypeEdge = edge.type === CoreEdgeType.EXTENDS || edge.type === CoreEdgeType.IMPLEMENTS;
+    if (!subtype || !supertype || !isSubtypeEdge) return [];
+    return [
+      {
+        subtypeId: edge.startNodeId,
+        subtypeName: subtype.name,
+        subtypeFilePath: subtype.filePath,
+        edgeType: edge.type,
+        supertypeId: edge.endNodeId,
+        supertypeName: supertype.name,
+        supertypeType: supertype.coreType,
+        supertypeFilePath: supertype.filePath,
+      },
+    ];
+  });
+};
 
 /**
  * Parses the files that changed since the last parse, along with the unchanged files that import a
@@ -91,26 +125,57 @@ export const reparseChangedFiles = async (
 
   const savedIncomingEdges = await saveIncomingEdges(neo4jService, removedFiles, projectId);
   const previousNodeIds = await loadNodeIds(neo4jService, filesToReparse, projectId);
+  const storedSubtypeEdges = await loadSubtypeEdges(neo4jService, projectId);
+  const storedBarrels = await findReExportingFiles(neo4jService, removedFiles, projectId);
 
-  parser.addExistingNodesFromChunk(await loadExistingNodesForEdgeDetection(neo4jService, removedFiles, projectId));
+  const existingNodes = await loadExistingNodesForEdgeDetection(neo4jService, removedFiles, projectId);
+  parser.addExistingNodesFromChunk(existingNodes);
+  // A call through an interface links to its implementers, which the parser finds only among the edges it holds.
+  parser.mergeDeferredEdges(
+    storedSubtypeEdges
+      .filter((edge) => !removedFiles.includes(edge.subtypeFilePath))
+      .map((edge) => ({
+        edgeType: edge.edgeType,
+        sourceNodeId: edge.subtypeId,
+        targetName: edge.supertypeName,
+        targetType: edge.supertypeType,
+        targetFilePath: edge.supertypeFilePath,
+      })),
+  );
   await parser.parseWorkspace(filesToReparse);
-  const nodes = parser.exportToJson().nodes;
+  const reparsed = parser.exportToJson();
+  const nodes = reparsed.nodes;
   const reparsedNodeIds = new Set(nodes.map((node) => node.id));
 
   const newNodes = nodes.filter((node) => !previousNodeIds.has(node.id));
-  const dependentFiles = new Set(await findDependentFiles(neo4jService, newNodes, removedFiles, projectId));
+  const subtypeChanges = describeSubtypeChanges(
+    storedSubtypeEdges.filter((edge) => filesToReparse.includes(edge.subtypeFilePath)),
+    subtypeEdgesOf(reparsed.edges, nodes, existingNodes),
+  );
+  const referencingFiles = await findDependentFiles(neo4jService, newNodes, subtypeChanges, removedFiles, projectId);
+  const barrels = new Set([...storedBarrels, ...reExportingFilesOf(nodes)]);
+  const barrelImporters = await findImportersThroughReExports(neo4jService, [...barrels], projectId);
+  const dependentFiles = new Set(
+    [...referencingFiles, ...barrelImporters].filter((filePath) => !removedFiles.includes(filePath)),
+  );
   if (dependentFiles.size > 0) {
     await parser.parseWorkspace([...dependentFiles]);
   }
+  const parsed = parser.exportToJson();
+  const dependentNodeIds = new Set(
+    parsed.nodes.filter((node) => dependentFiles.has(node.properties.filePath)).map((node) => node.id),
+  );
 
   // Nothing is deleted until the parse has succeeded, so a parse that throws leaves the old subgraphs in place.
   await deleteSourceFileSubgraphs(neo4jService, removedFiles, projectId);
+  if (dependentFiles.size > 0) {
+    // A dependent file keeps its nodes and gets the outgoing edges this parse produced in place of its stored ones.
+    await deleteOutgoingEdges(neo4jService, [...dependentFiles], projectId);
+  }
 
-  // A dependent file's nodes and its other edges are already in the graph. Only its edges into the
-  // reparsed files are imported, in place of the ones saved from it.
-  const edges = parser
-    .exportToJson()
-    .edges.filter((edge) => reparsedNodeIds.has(edge.startNodeId) || reparsedNodeIds.has(edge.endNodeId));
+  const edges = parsed.edges.filter(
+    (edge) => reparsedNodeIds.has(edge.startNodeId) || dependentNodeIds.has(edge.startNodeId),
+  );
   const incomingEdges = savedIncomingEdges.filter((edge) => !dependentFiles.has(edge.startFilePath));
   await debugLog('Incremental parse: parsed changed files', {
     nodeCount: nodes.length,

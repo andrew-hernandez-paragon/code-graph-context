@@ -41,7 +41,6 @@ export const loadExistingNodesForEdgeDetection = async (
       coreType: row.coreType,
       semanticType: row.semanticType ?? undefined,
       filePath: row.filePath,
-      parentClassName: row.parentClassName ?? undefined,
     } as Neo4jNodeProperties,
   }));
 };

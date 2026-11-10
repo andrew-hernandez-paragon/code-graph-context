@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { CoreNodeType, type Neo4jNode } from '../../../core/config/schema.js';
 import {
   CANDIDATE_IMPORTS_QUERY,
+  describeSubtypeChanges,
+  findImportersThroughReExports,
+  IMPORTERS_QUERY,
+  type SubtypeEdge,
   FILES_MENTIONING_QUERY,
   findDependentFiles,
   loadNodeIds,
@@ -30,6 +34,7 @@ const importRow = (filePath: string, moduleSpecifier: string, sourceCode: string
   moduleSpecifier,
   sourceCode,
 });
+const NO_SUBTYPE_CHANGES = { changedSupertypeNames: [], supertypeNamesByClass: new Map<string, string[]>() };
 const neo4jReturning = (rows: Array<ReturnType<typeof importRow>>) => ({ run: vi.fn(async () => rows) });
 
 describe('findDependentFiles', () => {
@@ -43,6 +48,7 @@ describe('findDependentFiles', () => {
     const dependents = await findDependentFiles(
       neo4j as never,
       [node(CoreNodeType.FUNCTION_DECLARATION, 'chunkNote', '/work/code/src/chunker.ts')],
+      NO_SUBTYPE_CHANGES,
       ['/work/code/src/chunker.ts'],
       'proj_code',
     );
@@ -70,6 +76,7 @@ describe('findDependentFiles', () => {
     const dependents = await findDependentFiles(
       { run } as never,
       [node(CoreNodeType.METHOD_DECLARATION, 'refresh', '/work/code/src/service.ts', 'Service')],
+      NO_SUBTYPE_CHANGES,
       ['/work/code/src/service.ts'],
       'proj_code',
     );
@@ -91,6 +98,7 @@ describe('findDependentFiles', () => {
     const dependents = await findDependentFiles(
       neo4j as never,
       [node(CoreNodeType.CONSTRUCTOR_DECLARATION, 'constructor', '/work/code/src/service.ts', 'Service')],
+      NO_SUBTYPE_CHANGES,
       ['/work/code/src/service.ts'],
       'proj_code',
     );
@@ -122,6 +130,7 @@ describe('findDependentFiles', () => {
     const dependents = await findDependentFiles(
       neo4j as never,
       [node(CoreNodeType.SOURCE_FILE, 'data-directory.ts', '/work/code/src/utils/data-directory.ts')],
+      NO_SUBTYPE_CHANGES,
       ['/work/code/src/utils/data-directory.ts'],
       'proj_code',
     );
@@ -147,6 +156,7 @@ describe('findDependentFiles', () => {
     const dependents = await findDependentFiles(
       neo4j as never,
       [node(CoreNodeType.SOURCE_FILE, 'index.ts', '/work/code/src/projects/index.ts')],
+      NO_SUBTYPE_CHANGES,
       ['/work/code/src/projects/index.ts'],
       'proj_code',
     );
@@ -167,12 +177,110 @@ describe('findDependentFiles', () => {
         node(CoreNodeType.IMPORT_DECLARATION, 'path', '/work/code/src/caller.ts'),
         node(CoreNodeType.PARAMETER_DECLARATION, 'path', '/work/code/src/caller.ts'),
       ],
+      NO_SUBTYPE_CHANGES,
       ['/work/code/src/caller.ts'],
       'proj_code',
     );
 
     expect(dependents).toEqual([]);
     expect(neo4j.run).not.toHaveBeenCalled();
+  });
+});
+
+describe('subtype changes', () => {
+  const implementsEdge = (className: string, interfaceName: string): SubtypeEdge => ({
+    subtypeId: `proj_code:ClassDeclaration:${className}`,
+    subtypeName: className,
+    subtypeFilePath: '/work/code/src/disk.ts',
+    edgeType: 'IMPLEMENTS',
+    supertypeId: `proj_code:InterfaceDeclaration:${interfaceName}`,
+    supertypeName: interfaceName,
+    supertypeType: 'InterfaceDeclaration',
+    supertypeFilePath: '/work/code/src/store.ts',
+  });
+
+  it('names the supertypes a class started or stopped implementing', () => {
+    const changes = describeSubtypeChanges(
+      [implementsEdge('Disk', 'Store'), implementsEdge('Disk', 'Closeable')],
+      [implementsEdge('Disk', 'Store'), implementsEdge('Disk', 'Flushable')],
+    );
+
+    expect(changes.changedSupertypeNames).toEqual(['Closeable', 'Flushable']);
+    expect(changes.supertypeNamesByClass).toEqual(new Map([['Disk', ['Store', 'Flushable']]]));
+  });
+
+  it('finds the files that import a supertype whose implementers changed', async () => {
+    const neo4j = neo4jReturning([
+      importRow('/work/code/src/caller.ts', './store.js', "import { Store } from './store.js';"),
+    ]);
+
+    const dependents = await findDependentFiles(
+      neo4j as never,
+      [],
+      { changedSupertypeNames: ['Store'], supertypeNamesByClass: new Map() },
+      ['/work/code/src/disk.ts'],
+      'proj_code',
+    );
+
+    expect(dependents).toEqual(['/work/code/src/caller.ts']);
+  });
+
+  it('looks for a new method among the importers of the supertypes of its class', async () => {
+    const run = vi.fn(async (query: string) =>
+      query === CANDIDATE_IMPORTS_QUERY
+        ? [importRow('/work/code/src/caller.ts', './store.js', "import { Store } from './store.js';")]
+        : [{ filePath: '/work/code/src/caller.ts' }],
+    );
+
+    const dependents = await findDependentFiles(
+      { run } as never,
+      [node(CoreNodeType.METHOD_DECLARATION, 'flush', '/work/code/src/disk.ts', 'Disk')],
+      { changedSupertypeNames: [], supertypeNamesByClass: new Map([['Disk', ['Store']]]) },
+      ['/work/code/src/disk.ts'],
+      'proj_code',
+    );
+
+    expect(run).toHaveBeenCalledWith(CANDIDATE_IMPORTS_QUERY, expect.objectContaining({ names: ['Disk', 'Store'] }));
+    expect(dependents).toEqual(['/work/code/src/caller.ts']);
+  });
+});
+
+describe('findImportersThroughReExports', () => {
+  it('follows importers through barrels that import the changed barrel', async () => {
+    const importersOf: Record<string, Array<{ filePath: string; reExports: boolean }>> = {
+      '/work/code/src/core/index.ts': [
+        { filePath: '/work/code/src/index.ts', reExports: true },
+        { filePath: '/work/code/src/direct-user.ts', reExports: false },
+      ],
+      '/work/code/src/index.ts': [{ filePath: '/work/code/src/outer-user.ts', reExports: false }],
+    };
+    const run = vi.fn(async (_query: string, params: { filePaths: string[] }) =>
+      params.filePaths.flatMap((filePath) => importersOf[filePath] ?? []),
+    );
+
+    const importers = await findImportersThroughReExports(
+      { run } as never,
+      ['/work/code/src/core/index.ts'],
+      'proj_code',
+    );
+
+    expect(run).toHaveBeenNthCalledWith(1, IMPORTERS_QUERY, {
+      filePaths: ['/work/code/src/core/index.ts'],
+      projectId: 'proj_code',
+      reExportPattern: `(?s).*\\bexport\\b[^;]*?\\bfrom\\s*['"].*`,
+    });
+    expect(importers).toEqual([
+      '/work/code/src/index.ts',
+      '/work/code/src/direct-user.ts',
+      '/work/code/src/outer-user.ts',
+    ]);
+  });
+
+  it('reads nothing when no barrel changed', async () => {
+    const run = vi.fn();
+
+    expect(await findImportersThroughReExports({ run } as never, [], 'proj_code')).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

@@ -53,7 +53,7 @@ describe('incoming edges of files being reparsed', () => {
 });
 
 describe('existing nodes for edge resolution', () => {
-  it('carries the class a method belongs to, so a call resolves by receiver type', async () => {
+  it('returns the fields the parser resolves an edge target from', async () => {
     const run = vi.fn(async () => [
       {
         id: 'proj_code:MethodDeclaration:run',
@@ -62,7 +62,6 @@ describe('existing nodes for edge resolution', () => {
         semanticType: null,
         labels: ['Method'],
         filePath: '/work/code/service.ts',
-        parentClassName: 'Service',
       },
     ]);
 
@@ -83,7 +82,6 @@ describe('existing nodes for edge resolution', () => {
           coreType: 'MethodDeclaration',
           semanticType: undefined,
           filePath: '/work/code/service.ts',
-          parentClassName: 'Service',
         },
       },
     ]);

@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TypeScriptParser } from '../../../core/parsers/typescript-parser.js';
 import { FIND_BY_ID_QUERY } from '../../../core/projects/index.js';
+import { generateDeterministicId } from '../../../core/utils/graph-factory.js';
 import { QUERIES } from '../../../storage/neo4j/neo4j.service.js';
-import { CANDIDATE_IMPORTS_QUERY, NODE_IDS_IN_FILES_QUERY } from '../dependent-files.js';
+import { CANDIDATE_IMPORTS_QUERY, DELETE_OUTGOING_EDGES_QUERY, NODE_IDS_IN_FILES_QUERY } from '../dependent-files.js';
 import { performIncrementalParse } from '../incremental-parse.handler.js';
 
 type Row = Record<string, unknown>;
@@ -57,9 +58,6 @@ vi.mock('../graph-generator.handler.js', () => ({
 vi.mock('../session-edge-recovery.helpers.js', () => ({ recoverSessionEdges: vi.fn() }));
 
 const PROJECT_ID = 'proj_lab';
-const SERVICE_RUN = 'proj_lab:MethodDeclaration:servicerun';
-const DECOY_RUN = 'proj_lab:MethodDeclaration:decoyrun';
-const SERVICE_FILE = 'proj_lab:SourceFile:service';
 
 const SOURCES = {
   'service.ts': 'export class Service {\n  run(): number {\n    return 1;\n  }\n}\n',
@@ -90,6 +88,28 @@ describe('performIncrementalParse', () => {
       .digest('hex'),
   });
   const callsOf = (query: string) => calls.filter((call) => call.query === query);
+  /** The nodes the graph holds for service.ts and decoy.ts, under the ids a parse gives them. */
+  const storedNodes = () =>
+    ['service.ts', 'decoy.ts'].flatMap((file) => {
+      const className = file === 'service.ts' ? 'Service' : 'Decoy';
+      const idOf = (coreType: string, name: string, parentId?: string) =>
+        generateDeterministicId(PROJECT_ID, coreType, pathOf(file), name, parentId);
+      const fileId = idOf('SourceFile', file);
+      const classId = idOf('ClassDeclaration', className, fileId);
+      const node = (id: string, name: string, coreType: string) => ({
+        id,
+        name,
+        coreType,
+        semanticType: null,
+        labels: ['TypeScript'],
+        filePath: pathOf(file),
+      });
+      return [
+        node(fileId, file, 'SourceFile'),
+        node(classId, className, 'ClassDeclaration'),
+        node(idOf('MethodDeclaration', 'run', classId), `${className}.run`, 'MethodDeclaration'),
+      ];
+    });
 
   /** Answers the handler's queries from fixtures: `indexed` is what the graph holds before the parse. */
   const stubGraph = (
@@ -111,21 +131,8 @@ describe('performIncrementalParse', () => {
       if (query === NODE_IDS_IN_FILES_QUERY) return (stored.nodeIds ?? []).map((id) => ({ id }));
       if (query === CANDIDATE_IMPORTS_QUERY) return stored.candidateImports ?? [];
       if (query === QUERIES.GET_EXISTING_NODES_FOR_EDGE_DETECTION) {
-        const node = (id: string, name: string, coreType: string, file: string, parentClassName: string | null) => ({
-          id,
-          name,
-          coreType,
-          semanticType: null,
-          labels: ['TypeScript'],
-          filePath: pathOf(file),
-          parentClassName,
-        });
         const excluded = params.excludeFilePaths as string[];
-        return [
-          node(DECOY_RUN, 'run', 'MethodDeclaration', 'decoy.ts', 'Decoy'),
-          node(SERVICE_RUN, 'run', 'MethodDeclaration', 'service.ts', 'Service'),
-          node(SERVICE_FILE, 'service.ts', 'SourceFile', 'service.ts', null),
-        ].filter((existing) => !excluded.includes(existing.filePath));
+        return storedNodes().filter((existing) => !excluded.includes(existing.filePath));
       }
       return [];
     };
@@ -156,10 +163,11 @@ describe('performIncrementalParse', () => {
     expect(callsOf(QUERIES.GET_INCOMING_EDGES).map((call) => call.params)).toEqual([
       { filePaths: [pathOf('caller.ts')], projectId: PROJECT_ID },
     ]);
+    const storedNames = new Map(storedNodes().map((node) => [node.id, node.name]));
     const crossFileTargets = graph.importedEdges
       .filter((edge) => edge.type === 'CALLS' || edge.type === 'IMPORTS')
-      .map((edge) => `${edge.type} ${edge.endNodeId}`);
-    expect(crossFileTargets.sort()).toEqual([`CALLS ${SERVICE_RUN}`, `IMPORTS ${SERVICE_FILE}`]);
+      .map((edge) => `${edge.type} ${storedNames.get(edge.endNodeId)}`);
+    expect(crossFileTargets.sort()).toEqual(['CALLS Service.run', 'IMPORTS service.ts']);
     expect(callsOf(QUERIES.RESTORE_INCOMING_EDGES).map((call) => call.params)).toEqual([
       { edges: [INCOMING_EDGE], projectId: PROJECT_ID },
     ]);
@@ -168,7 +176,7 @@ describe('performIncrementalParse', () => {
     expect(result.edgesUpdated).toBe(graph.importedEdges.length + 1);
   });
 
-  it('parses an unchanged importer of a new declaration and imports its edges in place of the saved ones', async () => {
+  it('parses an unchanged importer of a new declaration and replaces its outgoing edges', async () => {
     writeFileSync(
       pathOf('service.ts'),
       `${SOURCES['service.ts']}\nexport function createService(): Service {\n  return new Service();\n}\n`,
@@ -198,9 +206,12 @@ describe('performIncrementalParse', () => {
     expect([...new Set(graph.importedNodes.map((node) => node.properties.filePath))]).toEqual([pathOf('service.ts')]);
     const importedNames = new Map(graph.importedNodes.map((node) => [node.id, node.properties.name]));
     const edgesFromTheImporter = graph.importedEdges
-      .filter((edge) => !importedNames.has(edge.startNodeId))
+      .filter((edge) => !importedNames.has(edge.startNodeId) && importedNames.has(edge.endNodeId))
       .map((edge) => `${edge.type} ${importedNames.get(edge.endNodeId)}`);
-    expect(edgesFromTheImporter.sort()).toEqual(['CALLS createService', 'IMPORTS service.ts']);
+    expect(edgesFromTheImporter.sort()).toEqual(['CALLS createService', 'CALLS run', 'IMPORTS service.ts']);
+    expect(callsOf(DELETE_OUTGOING_EDGES_QUERY).map((call) => call.params)).toEqual([
+      { filePaths: [pathOf('user.ts')], projectId: PROJECT_ID },
+    ]);
     expect(callsOf(QUERIES.RESTORE_INCOMING_EDGES).map((call) => call.params)).toEqual([
       { edges: [incomingEdgeFrom(pathOf('caller.ts'))], projectId: PROJECT_ID },
     ]);
