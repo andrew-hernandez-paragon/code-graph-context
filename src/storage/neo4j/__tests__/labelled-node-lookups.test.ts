@@ -14,16 +14,17 @@ import { QUERIES } from '../neo4j.service.js';
 // Without a label Neo4j cannot use an index and scans every node in the database.
 const labelledLookups: Array<[string, string, string]> = [
   ['DELETE_SOURCE_FILE_SUBGRAPHS', QUERIES.DELETE_SOURCE_FILE_SUBGRAPHS, 'MATCH (n:GraphNode)'],
-  ['GET_CROSS_FILE_EDGES', QUERIES.GET_CROSS_FILE_EDGES, 'MATCH (n:GraphNode)'],
+  ['GET_INCOMING_EDGES target', QUERIES.GET_INCOMING_EDGES, 'MATCH (target:GraphNode)'],
+  ['GET_INCOMING_EDGES source', QUERIES.GET_INCOMING_EDGES, 'MATCH (source:GraphNode)-[r]->(target)'],
   [
-    'RECREATE_CROSS_FILE_EDGES start',
-    QUERIES.RECREATE_CROSS_FILE_EDGES,
-    'MATCH (startNode:GraphNode {id: edge.startNodeId, projectId: $projectId})',
+    'RESTORE_INCOMING_EDGES source',
+    QUERIES.RESTORE_INCOMING_EDGES,
+    'MATCH (source:GraphNode {id: edge.startNodeId, projectId: $projectId})',
   ],
   [
-    'RECREATE_CROSS_FILE_EDGES end',
-    QUERIES.RECREATE_CROSS_FILE_EDGES,
-    'MATCH (endNode:GraphNode {id: edge.endNodeId, projectId: $projectId})',
+    'RESTORE_INCOMING_EDGES target',
+    QUERIES.RESTORE_INCOMING_EDGES,
+    'MATCH (target:GraphNode {id: edge.endNodeId, projectId: $projectId})',
   ],
   [
     'RECREATE_ABOUT_EDGES',

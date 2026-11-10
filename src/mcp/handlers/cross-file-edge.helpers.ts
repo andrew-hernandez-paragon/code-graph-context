@@ -3,10 +3,12 @@
  * Shared utilities for managing cross-file edges during incremental parsing
  */
 
-import type { ExistingNode } from '../../core/parsers/typescript-parser.js';
+import type { Neo4jNode, Neo4jNodeProperties } from '../../core/config/schema.js';
+import { toNumber } from '../../core/utils/shared-utils.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 
-export interface CrossFileEdge {
+/** An edge from a node in a file that stays in the graph to a node in a file being reparsed or deleted. */
+export interface IncomingEdge {
   startNodeId: string;
   endNodeId: string;
   edgeType: string;
@@ -25,19 +27,44 @@ export const loadExistingNodesForEdgeDetection = async (
   neo4jService: Neo4jService,
   excludeFilePaths: string[],
   projectId: string,
-): Promise<ExistingNode[]> => {
-  const queryResult = await neo4jService.run(QUERIES.GET_EXISTING_NODES_FOR_EDGE_DETECTION, {
-    excludeFilePaths,
-    projectId,
-  });
-  return queryResult as ExistingNode[];
+): Promise<Neo4jNode[]> => {
+  const rows = await neo4jService.run(QUERIES.GET_EXISTING_NODES_FOR_EDGE_DETECTION, { excludeFilePaths, projectId });
+  return rows.map((row) => ({
+    id: row.id,
+    labels: row.labels,
+    // The parser resolves edge targets from these fields alone, so source text and line numbers stay in Neo4j.
+    properties: {
+      id: row.id,
+      projectId,
+      name: row.name,
+      coreType: row.coreType,
+      semanticType: row.semanticType ?? undefined,
+      filePath: row.filePath,
+      parentClassName: row.parentClassName ?? undefined,
+    } as Neo4jNodeProperties,
+  }));
 };
 
-export const getCrossFileEdges = async (
+export const saveIncomingEdges = async (
   neo4jService: Neo4jService,
   filePaths: string[],
   projectId: string,
-): Promise<CrossFileEdge[]> => {
-  const queryResult = await neo4jService.run(QUERIES.GET_CROSS_FILE_EDGES, { filePaths, projectId });
-  return queryResult as CrossFileEdge[];
+): Promise<IncomingEdge[]> => {
+  const rows = await neo4jService.run(QUERIES.GET_INCOMING_EDGES, { filePaths, projectId });
+  return rows.map((row) => ({
+    startNodeId: row.startNodeId,
+    endNodeId: row.endNodeId,
+    edgeType: row.edgeType,
+    edgeProperties: row.edgeProperties,
+  }));
+};
+
+export const restoreIncomingEdges = async (
+  neo4jService: Neo4jService,
+  edges: IncomingEdge[],
+  projectId: string,
+): Promise<number> => {
+  if (edges.length === 0) return 0;
+  const rows = await neo4jService.run(QUERIES.RESTORE_INCOMING_EDGES, { edges, projectId });
+  return toNumber(rows[0]?.restoredCount);
 };

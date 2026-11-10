@@ -13,21 +13,16 @@ import { Worker } from 'worker_threads';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import { CORE_TYPESCRIPT_SCHEMA } from '../../core/config/schema.js';
+import { CORE_TYPESCRIPT_SCHEMA, Neo4jEdge, Neo4jNode } from '../../core/config/schema.js';
 import { stopEmbeddingSidecar } from '../../core/embeddings/embedding-sidecar.js';
 import { EmbeddingsService } from '../../core/embeddings/embeddings.service.js';
 import { ParserFactory, ProjectType } from '../../core/parsers/parser-factory.js';
 import { getProjectName, ProjectService } from '../../core/projects/index.js';
-import { detectChangedFiles } from '../../core/utils/file-change-detection.js';
 import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 import { TOOL_NAMES, TOOL_METADATA, FILE_PATHS, LOG_CONFIG, PARSING, CONFIG_FILE_PATTERNS } from '../constants.js';
-import {
-  CrossFileEdge,
-  deleteSourceFileSubgraphs,
-  loadExistingNodesForEdgeDetection,
-  getCrossFileEdges,
-} from '../handlers/cross-file-edge.helpers.js';
+import { IncomingEdge, restoreIncomingEdges } from '../handlers/cross-file-edge.helpers.js';
 import { GraphGeneratorHandler } from '../handlers/graph-generator.handler.js';
+import { reparseChangedFiles } from '../handlers/incremental-parse.handler.js';
 import { recoverSessionEdges, formatSessionEdgeRecoverySummary } from '../handlers/session-edge-recovery.helpers.js';
 import { StreamingImportHandler } from '../handlers/streaming-import.handler.js';
 import { jobManager } from '../services/job-manager.js';
@@ -396,7 +391,7 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           projectType,
         });
 
-        const { nodes, edges, savedCrossFileEdges, resolvedProjectId: finalProjectId } = graphData;
+        const { nodes, edges, incomingEdges, resolvedProjectId: finalProjectId } = graphData;
 
         await debugLog('Parsing completed', {
           nodeCount: nodes.length,
@@ -413,16 +408,8 @@ export const createParseTypescriptProjectTool = (server: McpServer): void => {
           graphGeneratorHandler.setProjectId(finalProjectId);
           const result = await graphGeneratorHandler.generateGraph(outputPath, clearExisting);
 
-          // Recreate cross-file edges after incremental parse
-          if (!clearExisting && savedCrossFileEdges.length > 0) {
-            await debugLog('Recreating cross-file edges', { edgesToRecreate: savedCrossFileEdges.length });
-            const recreateResult = await neo4jService.run(QUERIES.RECREATE_CROSS_FILE_EDGES, {
-              edges: savedCrossFileEdges,
-              projectId: finalProjectId,
-            });
-            const recreatedCount = recreateResult[0]?.recreatedCount ?? 0;
-            await debugLog('Cross-file edges recreated', { recreatedCount, expected: savedCrossFileEdges.length });
-          }
+          const restoredCount = await restoreIncomingEdges(neo4jService, incomingEdges, finalProjectId);
+          await debugLog('Incoming edges restored', { restoredCount, saved: incomingEdges.length });
 
           await debugLog('Neo4j import completed', result);
 
@@ -522,9 +509,9 @@ interface ParseProjectOptions {
 }
 
 interface ParseProjectResult {
-  nodes: any[];
-  edges: any[];
-  savedCrossFileEdges: CrossFileEdge[];
+  nodes: Neo4jNode[];
+  edges: Neo4jEdge[];
+  incomingEdges: IncomingEdge[];
   resolvedProjectId: string;
   metadata: {
     coreSchema: string;
@@ -555,53 +542,27 @@ const parseProject = async (options: ParseProjectOptions): Promise<ParseProjectR
         });
 
   let incrementalStats: { filesReparsed: number; filesDeleted: number } | undefined;
-
-  let savedCrossFileEdges: CrossFileEdge[] = [];
+  let graph: { nodes: Neo4jNode[]; edges: Neo4jEdge[] };
+  let incomingEdges: IncomingEdge[] = [];
 
   if (clearExisting) {
     // Full rebuild: parse all files
     await parser.parseWorkspace();
+    graph = parser.exportToJson();
   } else {
-    // Incremental: detect changes and parse only affected files
-    const { filesToReparse, filesToDelete } = await detectChangedFiles(projectPath, neo4jService, projectId);
-    incrementalStats = { filesReparsed: filesToReparse.length, filesDeleted: filesToDelete.length };
-
-    await debugLog('Incremental change detection', { filesToReparse, filesToDelete });
-
-    const filesToRemoveFromGraph = [...filesToDelete, ...filesToReparse];
-    if (filesToRemoveFromGraph.length > 0) {
-      // Save cross-file edges before deletion (they'll be recreated after import)
-      savedCrossFileEdges = await getCrossFileEdges(neo4jService, filesToRemoveFromGraph, projectId);
-      await debugLog('Saved cross-file edges', { count: savedCrossFileEdges.length, edges: savedCrossFileEdges });
-
-      await deleteSourceFileSubgraphs(neo4jService, filesToRemoveFromGraph, projectId);
-    }
-
-    if (filesToReparse.length > 0) {
-      await debugLog('Incremental parse starting', {
-        filesChanged: filesToReparse.length,
-        filesDeleted: filesToDelete.length,
-      });
-
-      // Load existing nodes from Neo4j for edge target matching
-      const existingNodes = await loadExistingNodesForEdgeDetection(neo4jService, filesToRemoveFromGraph, projectId);
-      await debugLog('Loaded existing nodes for edge detection', { count: existingNodes.length });
-      parser.setExistingNodes(existingNodes);
-
-      await parser.parseWorkspace(filesToReparse);
-    } else {
-      await debugLog('Incremental parse: no changes detected');
-    }
+    const changes = await reparseChangedFiles(parser, neo4jService, projectPath, projectId);
+    graph = changes;
+    incomingEdges = changes.incomingEdges;
+    incrementalStats = { filesReparsed: changes.filesReparsed, filesDeleted: changes.filesDeleted };
   }
 
-  const { nodes, edges } = parser.exportToJson();
   const frameworkSchemas = parser['frameworkSchemas']?.map((s: any) => s.name) ?? ['Auto-detected'];
   const resolvedProjectId = parser.getProjectId();
 
   return {
-    nodes,
-    edges,
-    savedCrossFileEdges,
+    nodes: graph.nodes,
+    edges: graph.edges,
+    incomingEdges,
     resolvedProjectId,
     metadata: {
       coreSchema: CORE_TYPESCRIPT_SCHEMA.name,

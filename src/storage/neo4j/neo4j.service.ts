@@ -338,19 +338,16 @@ export const QUERIES = {
            COALESCE(sf.contentHash, '') AS contentHash
   `,
 
-  // Get cross-file edges before deletion (edges where one endpoint is outside the subgraph)
-  // These will be recreated after import using deterministic IDs
-  // Uses filePath matching instead of relationship traversal to avoid following INJECTS/IMPORTS
-  GET_CROSS_FILE_EDGES: `
-    MATCH (n:GraphNode)
-    WHERE n.filePath IN $filePaths AND n.projectId = $projectId
-    WITH collect(DISTINCT n) AS nodesToDelete
-    UNWIND nodesToDelete AS node
-    MATCH (node)-[r]-(other)
-    WHERE NOT other IN nodesToDelete AND other.projectId = $projectId
+  // Edges into the given files from nodes outside them. A reparse rebuilds every edge that starts in a
+  // reparsed file, so these are the only edges it cannot recreate.
+  GET_INCOMING_EDGES: `
+    MATCH (target:GraphNode)
+    WHERE target.projectId = $projectId AND target.filePath IN $filePaths
+    MATCH (source:GraphNode)-[r]->(target)
+    WHERE source.projectId = $projectId AND NOT source.filePath IN $filePaths
     RETURN DISTINCT
-      startNode(r).id AS startNodeId,
-      endNode(r).id AS endNodeId,
+      source.id AS startNodeId,
+      target.id AS endNodeId,
       type(r) AS edgeType,
       properties(r) AS edgeProperties
   `,
@@ -364,13 +361,13 @@ export const QUERIES = {
     DETACH DELETE n
   `,
 
-  // Recreate cross-file edges after import (uses deterministic IDs)
-  RECREATE_CROSS_FILE_EDGES: `
+  // Node ids are deterministic, so an edge whose target the reparse dropped or renamed matches nothing.
+  RESTORE_INCOMING_EDGES: `
     UNWIND $edges AS edge
-    MATCH (startNode:GraphNode {id: edge.startNodeId, projectId: $projectId})
-    MATCH (endNode:GraphNode {id: edge.endNodeId, projectId: $projectId})
-    CALL apoc.create.relationship(startNode, edge.edgeType, edge.edgeProperties, endNode) YIELD rel
-    RETURN count(rel) AS recreatedCount
+    MATCH (source:GraphNode {id: edge.startNodeId, projectId: $projectId})
+    MATCH (target:GraphNode {id: edge.endNodeId, projectId: $projectId})
+    CALL apoc.create.relationship(source, edge.edgeType, edge.edgeProperties, target) YIELD rel
+    RETURN count(rel) AS restoredCount
   `,
 
   // ── Session/coordination edge recovery (Phase 1.4) ──────────────────────
@@ -481,7 +478,8 @@ export const QUERIES = {
            n.coreType AS coreType,
            n.semanticType AS semanticType,
            labels(n) AS labels,
-           n.filePath AS filePath
+           n.filePath AS filePath,
+           n.parentClassName AS parentClassName
   `,
 
   EXPLORE_ALL_CONNECTIONS: (
