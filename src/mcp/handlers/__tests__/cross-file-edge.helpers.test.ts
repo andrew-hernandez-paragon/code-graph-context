@@ -10,6 +10,7 @@ import {
 
 const EDGE = {
   startNodeId: 'proj_code:FunctionDeclaration:caller',
+  startFilePath: '/work/code/caller.ts',
   endNodeId: 'proj_code:FunctionDeclaration:callee',
   edgeType: 'CALLS',
   edgeProperties: { lineNumber: 12 },

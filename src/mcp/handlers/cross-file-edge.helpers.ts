@@ -10,6 +10,7 @@ import { Neo4jService, QUERIES } from '../../storage/neo4j/neo4j.service.js';
 /** An edge from a node in a file that stays in the graph to a node in a file being reparsed or deleted. */
 export interface IncomingEdge {
   startNodeId: string;
+  startFilePath: string;
   endNodeId: string;
   edgeType: string;
   edgeProperties: Record<string, unknown>;
@@ -53,6 +54,7 @@ export const saveIncomingEdges = async (
   const rows = await neo4jService.run(QUERIES.GET_INCOMING_EDGES, { filePaths, projectId });
   return rows.map((row) => ({
     startNodeId: row.startNodeId,
+    startFilePath: row.startFilePath,
     endNodeId: row.endNodeId,
     edgeType: row.edgeType,
     edgeProperties: row.edgeProperties,

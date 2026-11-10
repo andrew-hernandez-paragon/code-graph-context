@@ -23,6 +23,7 @@ import {
   restoreIncomingEdges,
   saveIncomingEdges,
 } from './cross-file-edge.helpers.js';
+import { findDependentFiles, loadNodeIds } from './dependent-files.js';
 import { GraphGeneratorHandler } from './graph-generator.handler.js';
 import { recoverSessionEdges } from './session-edge-recovery.helpers.js';
 
@@ -58,7 +59,8 @@ export interface ChangedFilesGraph {
 
 /**
  * Deletes the subgraphs of the files that changed or disappeared since the last parse and parses the
- * changed ones. The caller imports `nodes` and `edges`, then restores `incomingEdges`.
+ * changed ones, along with the unchanged files that import a declaration the graph has not held before.
+ * The caller imports `nodes` and `edges`, then restores `incomingEdges`.
  */
 export const reparseChangedFiles = async (
   parser: TypeScriptParser,
@@ -82,16 +84,32 @@ export const reparseChangedFiles = async (
   const removedFiles = [...filesToDelete, ...filesToReparse];
   if (removedFiles.length === 0) return nothingToImport;
 
-  const incomingEdges = await saveIncomingEdges(neo4jService, removedFiles, projectId);
+  const savedIncomingEdges = await saveIncomingEdges(neo4jService, removedFiles, projectId);
+  const previousNodeIds = await loadNodeIds(neo4jService, filesToReparse, projectId);
   await deleteSourceFileSubgraphs(neo4jService, removedFiles, projectId);
   if (filesToReparse.length === 0) return nothingToImport;
 
   parser.addExistingNodesFromChunk(await loadExistingNodesForEdgeDetection(neo4jService, removedFiles, projectId));
   await parser.parseWorkspace(filesToReparse);
-  const { nodes, edges } = parser.exportToJson();
+  const nodes = parser.exportToJson().nodes;
+  const reparsedNodeIds = new Set(nodes.map((node) => node.id));
+
+  const newNodes = nodes.filter((node) => !previousNodeIds.has(node.id));
+  const dependentFiles = new Set(await findDependentFiles(neo4jService, newNodes, removedFiles, projectId));
+  if (dependentFiles.size > 0) {
+    await parser.parseWorkspace([...dependentFiles]);
+  }
+
+  // A dependent file's nodes and its other edges are already in the graph. Only its edges into the
+  // reparsed files are imported, in place of the ones saved from it.
+  const edges = parser
+    .exportToJson()
+    .edges.filter((edge) => reparsedNodeIds.has(edge.startNodeId) || reparsedNodeIds.has(edge.endNodeId));
+  const incomingEdges = savedIncomingEdges.filter((edge) => !dependentFiles.has(edge.startFilePath));
   await debugLog('Incremental parse: parsed changed files', {
     nodeCount: nodes.length,
     edgeCount: edges.length,
+    dependentFiles: dependentFiles.size,
     incomingEdges: incomingEdges.length,
   });
 

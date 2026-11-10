@@ -348,6 +348,7 @@ export const QUERIES = {
     WHERE source.projectId = $projectId AND NOT source.filePath IN $filePaths
     RETURN DISTINCT
       source.id AS startNodeId,
+      source.filePath AS startFilePath,
       target.id AS endNodeId,
       type(r) AS edgeType,
       properties(r) AS edgeProperties

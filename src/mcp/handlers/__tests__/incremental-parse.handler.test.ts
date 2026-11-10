@@ -7,9 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FIND_BY_ID_QUERY } from '../../../core/projects/index.js';
 import { QUERIES } from '../../../storage/neo4j/neo4j.service.js';
+import { CANDIDATE_IMPORTS_QUERY, NODE_IDS_IN_FILES_QUERY } from '../dependent-files.js';
 import { performIncrementalParse } from '../incremental-parse.handler.js';
 
 type Row = Record<string, unknown>;
+interface ImportedNode {
+  id: string;
+  properties: { name: string; filePath: string };
+}
 interface ImportedEdge {
   type: string;
   startNodeId: string;
@@ -19,6 +24,7 @@ interface ImportedEdge {
 const { graph } = vi.hoisted(() => ({
   graph: {
     run: undefined as unknown as (query: string, params: Row) => Promise<Row[]>,
+    importedNodes: [] as ImportedNode[],
     importedEdges: [] as ImportedEdge[],
     imports: 0,
   },
@@ -40,6 +46,7 @@ vi.mock('../graph-generator.handler.js', () => ({
     setProjectId = vi.fn();
     generateGraph = async (graphJsonPath: string) => {
       const { nodes, edges } = JSON.parse(readFileSync(graphJsonPath, 'utf-8'));
+      graph.importedNodes = nodes;
       graph.importedEdges = edges;
       graph.imports += 1;
       return { nodesImported: nodes.length, edgesImported: edges.length };
@@ -60,12 +67,14 @@ const SOURCES = {
     "import { Service } from './service';\n\nexport function callService(service: Service): number {\n  return service.run();\n}\n",
 };
 
-const INCOMING_EDGE = {
-  startNodeId: 'proj_lab:FunctionDeclaration:user',
-  endNodeId: 'proj_lab:FunctionDeclaration:callservice',
+const incomingEdgeFrom = (startFilePath: string) => ({
+  startNodeId: `proj_lab:FunctionDeclaration:${startFilePath}`,
+  startFilePath,
+  endNodeId: 'proj_lab:FunctionDeclaration:target',
   edgeType: 'CALLS',
   edgeProperties: { lineNumber: 7 },
-};
+});
+const INCOMING_EDGE = incomingEdgeFrom('/elsewhere/unchanged.ts');
 
 describe('performIncrementalParse', () => {
   let root: string;
@@ -82,18 +91,24 @@ describe('performIncrementalParse', () => {
   const callsOf = (query: string) => calls.filter((call) => call.query === query);
 
   /** Answers the handler's queries from fixtures: `indexed` is what the graph holds before the parse. */
-  const stubGraph = (indexed: Row[], registeredPath = root) => {
+  const stubGraph = (
+    indexed: Row[],
+    stored: { registeredPath?: string; incomingEdges?: Row[]; nodeIds?: string[]; candidateImports?: Row[] } = {},
+  ) => {
     calls = [];
+    graph.importedNodes = [];
     graph.importedEdges = [];
     graph.imports = 0;
     graph.run = async (query, params) => {
       calls.push({ query, params });
       if (query === FIND_BY_ID_QUERY) {
-        return [{ projectId: PROJECT_ID, name: 'lab', kind: 'codebase', path: registeredPath }];
+        return [{ projectId: PROJECT_ID, name: 'lab', kind: 'codebase', path: stored.registeredPath ?? root }];
       }
       if (query === QUERIES.GET_SOURCE_FILE_TRACKING_INFO) return indexed;
-      if (query === QUERIES.GET_INCOMING_EDGES) return [INCOMING_EDGE];
+      if (query === QUERIES.GET_INCOMING_EDGES) return stored.incomingEdges ?? [INCOMING_EDGE];
       if (query === QUERIES.RESTORE_INCOMING_EDGES) return [{ restoredCount: 1 }];
+      if (query === NODE_IDS_IN_FILES_QUERY) return (stored.nodeIds ?? []).map((id) => ({ id }));
+      if (query === CANDIDATE_IMPORTS_QUERY) return stored.candidateImports ?? [];
       if (query === QUERIES.GET_EXISTING_NODES_FOR_EDGE_DETECTION) {
         const node = (id: string, name: string, coreType: string, file: string, parentClassName: string | null) => ({
           id,
@@ -104,11 +119,12 @@ describe('performIncrementalParse', () => {
           filePath: pathOf(file),
           parentClassName,
         });
+        const excluded = params.excludeFilePaths as string[];
         return [
           node(DECOY_RUN, 'run', 'MethodDeclaration', 'decoy.ts', 'Decoy'),
           node(SERVICE_RUN, 'run', 'MethodDeclaration', 'service.ts', 'Service'),
           node(SERVICE_FILE, 'service.ts', 'SourceFile', 'service.ts', null),
-        ];
+        ].filter((existing) => !excluded.includes(existing.filePath));
       }
       return [];
     };
@@ -150,6 +166,66 @@ describe('performIncrementalParse', () => {
     expect(result.edgesUpdated).toBe(graph.importedEdges.length + 1);
   });
 
+  it('parses an unchanged importer of a new declaration and imports its edges in place of the saved ones', async () => {
+    writeFileSync(
+      pathOf('service.ts'),
+      `${SOURCES['service.ts']}\nexport function createService(): Service {\n  return new Service();\n}\n`,
+    );
+    const importOfNewFunction = "import { createService } from './service';";
+    writeFileSync(
+      pathOf('user.ts'),
+      `${importOfNewFunction}\n\nexport function useService(): number {\n  return createService().run();\n}\n`,
+    );
+    stubGraph(
+      [
+        { ...trackingRow('service.ts'), contentHash: 'stale' },
+        trackingRow('decoy.ts'),
+        trackingRow('caller.ts'),
+        trackingRow('user.ts'),
+      ],
+      {
+        incomingEdges: [incomingEdgeFrom(pathOf('user.ts')), incomingEdgeFrom(pathOf('caller.ts'))],
+        candidateImports: [
+          { filePath: pathOf('user.ts'), moduleSpecifier: './service', sourceCode: importOfNewFunction },
+        ],
+      },
+    );
+
+    await performIncrementalParse(root, PROJECT_ID, join(root, 'tsconfig.json'));
+
+    expect([...new Set(graph.importedNodes.map((node) => node.properties.filePath))]).toEqual([pathOf('service.ts')]);
+    const importedNames = new Map(graph.importedNodes.map((node) => [node.id, node.properties.name]));
+    const edgesFromTheImporter = graph.importedEdges
+      .filter((edge) => !importedNames.has(edge.startNodeId))
+      .map((edge) => `${edge.type} ${importedNames.get(edge.endNodeId)}`);
+    expect(edgesFromTheImporter.sort()).toEqual(['CALLS createService', 'IMPORTS service.ts']);
+    expect(callsOf(QUERIES.RESTORE_INCOMING_EDGES).map((call) => call.params)).toEqual([
+      { edges: [incomingEdgeFrom(pathOf('caller.ts'))], projectId: PROJECT_ID },
+    ]);
+  });
+
+  it('looks for no importer when the reparse produced only nodes the graph already held', async () => {
+    const changedCaller = [
+      trackingRow('service.ts'),
+      trackingRow('decoy.ts'),
+      { ...trackingRow('caller.ts'), contentHash: 'stale' },
+    ];
+    stubGraph(changedCaller);
+    await performIncrementalParse(root, PROJECT_ID, join(root, 'tsconfig.json'));
+    const nodeIds = graph.importedNodes.map((node) => node.id);
+
+    stubGraph(changedCaller, { nodeIds });
+    await performIncrementalParse(root, PROJECT_ID, join(root, 'tsconfig.json'));
+
+    expect(callsOf(NODE_IDS_IN_FILES_QUERY).map((call) => call.params)).toEqual([
+      { filePaths: [pathOf('caller.ts')], projectId: PROJECT_ID },
+    ]);
+    expect(callsOf(CANDIDATE_IMPORTS_QUERY)).toEqual([]);
+    expect(callsOf(QUERIES.RESTORE_INCOMING_EDGES).map((call) => call.params)).toEqual([
+      { edges: [INCOMING_EDGE], projectId: PROJECT_ID },
+    ]);
+  });
+
   it('deletes the subgraph of a file that left the disk without importing or restoring anything', async () => {
     stubGraph([
       trackingRow('service.ts'),
@@ -169,7 +245,7 @@ describe('performIncrementalParse', () => {
   });
 
   it('refuses a project registered at another directory before it reads or changes the graph', async () => {
-    stubGraph([{ ...trackingRow('caller.ts'), contentHash: 'stale' }], '/work/elsewhere');
+    stubGraph([{ ...trackingRow('caller.ts'), contentHash: 'stale' }], { registeredPath: '/work/elsewhere' });
 
     await expect(performIncrementalParse(root, PROJECT_ID, join(root, 'tsconfig.json'))).rejects.toThrow(
       `Codebase 'lab' (proj_lab) is registered at /work/elsewhere, not ${root}.`,
